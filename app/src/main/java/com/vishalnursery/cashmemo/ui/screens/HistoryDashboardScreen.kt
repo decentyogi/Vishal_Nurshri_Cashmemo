@@ -1,8 +1,10 @@
 package com.vishalnursery.cashmemo.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
@@ -134,36 +137,76 @@ fun HistoryDashboardScreen(
             value = searchQuery,
             onValueChange = onSearchQueryChange,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            placeholder = { Text("Search memo #, customer, mobile, item...") },
+            placeholder = {
+                Text(
+                    text = "Search memo #, customer, mobile...",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
 
-        // Filter & Export Controls
+        // Filter Chips Row
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                MemoFilter.entries.forEach { filter ->
-                    FilterChip(
-                        selected = activeFilter == filter,
-                        onClick = { onFilterChange(filter) },
-                        label = { Text(filter.label, style = MaterialTheme.typography.labelSmall) }
-                    )
-                }
+            MemoFilter.entries.forEach { filter ->
+                FilterChip(
+                    selected = activeFilter == filter,
+                    onClick = { onFilterChange(filter) },
+                    label = {
+                        Text(
+                            text = filter.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                )
             }
+        }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedButton(onClick = onExportCsv) {
-                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("CSV", style = MaterialTheme.typography.labelSmall)
-                }
-                OutlinedButton(onClick = onExportJsonBackup) {
-                    Text("JSON", style = MaterialTheme.typography.labelSmall)
-                }
+        // Export Actions Row (equal width, never squished)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(
+                onClick = onExportCsv,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Export CSV",
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            OutlinedButton(
+                onClick = onExportJsonBackup,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Backup JSON",
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
 

@@ -4,6 +4,7 @@
 
 # Keep our DTOs and Domain Models used by Gson / Retrofit
 -keep class com.vishalnursery.cashmemo.data.remote.dto.** { *; }
+-keep class com.vishalnursery.cashmemo.data.ocr.** { *; }
 -keep class com.vishalnursery.cashmemo.domain.model.** { *; }
 
 # Retrofit

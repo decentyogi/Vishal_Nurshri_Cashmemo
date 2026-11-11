@@ -3,8 +3,10 @@ package com.vishalnursery.cashmemo.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,8 +43,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +57,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
@@ -138,7 +141,7 @@ fun ReviewEditorScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Scanned OCR Reference (Tap to inspect)",
+                            text = "Scanned AI / OCR Reference (Tap to inspect)",
                             style = MaterialTheme.typography.labelLarge,
                             color = NurseryColors.BotanicalGreen,
                             fontWeight = FontWeight.Bold
@@ -199,14 +202,14 @@ fun ReviewEditorScreen(
                     OutlinedTextField(
                         value = editorState.memoNumber,
                         onValueChange = onUpdateMemoNumber,
-                        label = { Text("Memo #") },
+                        label = { Text("Memo #", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = editorState.date,
                         onValueChange = onUpdateDate,
-                        label = { Text("Date (DD/MM/YYYY)") },
+                        label = { Text("Date (DD/MM/YYYY)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.weight(1.3f)
                     )
@@ -233,7 +236,7 @@ fun ReviewEditorScreen(
                 OutlinedTextField(
                     value = editorState.customerName,
                     onValueChange = onUpdateCustomerName,
-                    label = { Text("Customer / Nursery Name") },
+                    label = { Text("Customer / Nursery Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     singleLine = true,
                     textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center),
                     modifier = Modifier.fillMaxWidth()
@@ -276,7 +279,7 @@ fun ReviewEditorScreen(
                     OutlinedTextField(
                         value = editorState.customerMobile,
                         onValueChange = onUpdateCustomerMobile,
-                        label = { Text("Mobile") },
+                        label = { Text("Mobile", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         modifier = Modifier.weight(1f)
@@ -284,7 +287,7 @@ fun ReviewEditorScreen(
                     OutlinedTextField(
                         value = editorState.customerAddress,
                         onValueChange = onUpdateCustomerAddress,
-                        label = { Text("Address / Village") },
+                        label = { Text("Address / Village", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center),
                         modifier = Modifier.weight(1.3f)
@@ -300,7 +303,7 @@ fun ReviewEditorScreen(
         ) {
             Column(
                 modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -313,11 +316,13 @@ fun ReviewEditorScreen(
                         fontWeight = FontWeight.ExtraBold,
                         color = NurseryColors.Maroon
                     )
-                    TextButton(onClick = onAddItemRow) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Add Row")
-                    }
+                    Text(
+                        text = IndianCurrencyFormatter.formatInr(calc.subtotal, settings.currencySymbol),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = NurseryColors.BotanicalGreen
+                    )
                 }
 
                 editorState.items.forEachIndexed { index, item ->
@@ -327,8 +332,15 @@ fun ReviewEditorScreen(
                     var rateInput by remember(item.id) {
                         mutableStateOf(formatCleanNumber(item.rate, blankIfZero = true))
                     }
-                    if (item.rate != (rateInput.toDoubleOrNull() ?: 0.0) && item.rate > 0.0) {
-                        rateInput = formatCleanNumber(item.rate, blankIfZero = true)
+                    LaunchedEffect(item.id, item.quantity) {
+                        if (item.quantity != (qtyInput.toDoubleOrNull() ?: 0.0)) {
+                            qtyInput = formatCleanNumber(item.quantity, blankIfZero = false)
+                        }
+                    }
+                    LaunchedEffect(item.id, item.rate) {
+                        if (item.rate != (rateInput.toDoubleOrNull() ?: 0.0) && item.rate > 0.0) {
+                            rateInput = formatCleanNumber(item.rate, blankIfZero = true)
+                        }
                     }
 
                     val rateMatches = remember(item.description, plantRates) {
@@ -344,28 +356,35 @@ fun ReviewEditorScreen(
                     ) {
                         Column(
                             modifier = Modifier.padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "#${index + 1}",
-                                    fontWeight = FontWeight.Bold,
-                                    color = NurseryColors.Maroon
-                                )
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = NurseryColors.MaroonLight
+                                ) {
+                                    Text(
+                                        text = "#${index + 1}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = NurseryColors.Maroon,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
                                 Text(
                                     text = IndianCurrencyFormatter.formatInr(item.amount, settings.currencySymbol),
                                     fontWeight = FontWeight.ExtraBold,
                                     fontFamily = FontFamily.Monospace,
                                     color = NurseryColors.InkDark
                                 )
-                                Row {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     IconButton(
                                         onClick = { onCloneItemRow(index) },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(30.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.ContentCopy,
@@ -375,7 +394,7 @@ fun ReviewEditorScreen(
                                     }
                                     IconButton(
                                         onClick = { onRemoveItemRow(index) },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(30.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.Delete,
@@ -390,7 +409,7 @@ fun ReviewEditorScreen(
                             OutlinedTextField(
                                 value = item.description,
                                 onValueChange = { onUpdateItemDescription(index, it) },
-                                label = { Text("Item / Plant Description") },
+                                label = { Text("Item / Plant Description", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -429,7 +448,7 @@ fun ReviewEditorScreen(
                                         qtyInput = it
                                         onUpdateItemQuantity(index, it)
                                     },
-                                    label = { Text("Qty") },
+                                    label = { Text("Qty", maxLines = 1) },
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     modifier = Modifier.weight(1f)
@@ -440,7 +459,7 @@ fun ReviewEditorScreen(
                                         rateInput = it
                                         onUpdateItemRate(index, it)
                                     },
-                                    label = { Text("Rate (${settings.currencySymbol})") },
+                                    label = { Text("Rate (${settings.currencySymbol})", maxLines = 1) },
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     modifier = Modifier.weight(1.3f)
@@ -448,6 +467,29 @@ fun ReviewEditorScreen(
                             }
                         }
                     }
+                }
+
+                // Placed at the bottom of the item list so adding new plants never requires scrolling back up
+                OutlinedButton(
+                    onClick = onAddItemRow,
+                    border = BorderStroke(1.dp, NurseryColors.Maroon.copy(alpha = 0.5f)),
+                    contentPadding = PaddingValues(vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = null,
+                        tint = NurseryColors.Maroon,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Add Item / Plant Row",
+                        color = NurseryColors.Maroon,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
@@ -468,14 +510,16 @@ fun ReviewEditorScreen(
                     color = NurseryColors.Maroon
                 )
 
+                // Discount row + ₹ / % toggle on its own uncrowded row
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
                         value = editorState.discountText,
                         onValueChange = onUpdateDiscount,
-                        label = { Text("Discount") },
+                        label = { Text("Discount", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(1f)
@@ -484,47 +528,87 @@ fun ReviewEditorScreen(
                         FilterChip(
                             selected = editorState.discountType == dType,
                             onClick = { onUpdateDiscountType(dType) },
-                            label = { Text(dType.label) }
+                            label = {
+                                Text(
+                                    text = dType.label,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         )
                     }
+                }
+
+                // Equal 50/50 row with matching 1-line labels
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedTextField(
                         value = editorState.taxPercentageText,
                         onValueChange = onUpdateTaxPercentage,
-                        label = { Text("Tax %") },
+                        label = { Text("Tax %", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(0.9f)
+                        modifier = Modifier.weight(1f)
                     )
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = editorState.previousDuesText,
                         onValueChange = onUpdatePreviousDues,
-                        label = { Text("Previous Dues") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = editorState.paidAmountText,
-                        onValueChange = onUpdatePaidAmount,
-                        label = { Text("Paid (blank = full)") },
+                        label = {
+                            Text(
+                                text = "Prev. Dues (${settings.currencySymbol})",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(1f)
                     )
                 }
 
+                // Paid Amount with clean 1-line label & helpful placeholder
+                OutlinedTextField(
+                    value = editorState.paidAmountText,
+                    onValueChange = onUpdatePaidAmount,
+                    label = {
+                        Text(
+                            text = "Paid Amount (${settings.currencySymbol})",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    placeholder = {
+                        Text(
+                            text = "Leave blank if full amount paid",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf("Cash", "UPI", "Bank", "Card").forEach { method ->
                         FilterChip(
                             selected = editorState.paymentMethod == method,
                             onClick = { onUpdatePaymentMethod(method) },
-                            label = { Text(method, style = MaterialTheme.typography.labelSmall) }
+                            label = {
+                                Text(
+                                    text = method,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         )
                     }
                 }
@@ -597,31 +681,34 @@ fun ReviewEditorScreen(
         ) {
             OutlinedButton(
                 onClick = { showQrDialog = true },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(Icons.Default.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("UPI QR")
+                Text("UPI QR", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             }
 
             Button(
                 onClick = { onSaveMemo(false) },
                 colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen),
-                modifier = Modifier.weight(1.2f)
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                modifier = Modifier.weight(1.1f)
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Save")
+                Text("Save", maxLines = 1, softWrap = false)
             }
 
             Button(
                 onClick = { onSaveMemo(true) },
                 colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
-                modifier = Modifier.weight(1.2f)
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                modifier = Modifier.weight(1.1f)
             ) {
                 Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Print")
+                Text("Print", maxLines = 1, softWrap = false)
             }
         }
 

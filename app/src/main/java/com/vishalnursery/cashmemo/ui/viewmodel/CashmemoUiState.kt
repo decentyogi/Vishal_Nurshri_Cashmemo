@@ -1,5 +1,6 @@
 package com.vishalnursery.cashmemo.ui.viewmodel
 
+import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
@@ -55,9 +56,15 @@ data class EditorUiState(
 
 data class ScannerUiState(
     val isProcessingOcr: Boolean = false,
+    val processingLabel: String = "Analyzing with Gemini AI...",
     val ocrScriptMode: OcrScriptMode = OcrScriptMode.HINDI_AND_ENGLISH,
     val lastImageUri: String = "",
     val extractedRawText: String = "",
+    val pendingAiReview: AiScanPreview? = null,
+    val showApiKeyPrompt: Boolean = false,
+    val pendingUriForKeySetup: String = "",
+    val availableFlashModels: List<String> = emptyList(),
+    val isDetectingModels: Boolean = false,
     val errorMessage: String? = null
 )
 

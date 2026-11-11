@@ -4,8 +4,11 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.vishalnursery.cashmemo.data.ocr.GeminiVisionService
 import com.vishalnursery.cashmemo.data.ocr.OcrScannerService
 import com.vishalnursery.cashmemo.data.repository.CashmemoRepository
+import com.vishalnursery.cashmemo.domain.model.AiExtractedItem
+import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
@@ -15,6 +18,7 @@ import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
 import com.vishalnursery.cashmemo.domain.model.OcrScriptMode
 import com.vishalnursery.cashmemo.domain.model.PlantRate
+import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.domain.model.round2
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.ReceiptParser
@@ -30,7 +34,8 @@ import kotlinx.coroutines.launch
 
 class CashmemoViewModel(
     private val repository: CashmemoRepository,
-    private val ocrService: OcrScannerService
+    private val ocrService: OcrScannerService,
+    private val geminiService: GeminiVisionService
 ) : ViewModel() {
 
     private val searchQueryFlow = MutableStateFlow("")
@@ -99,18 +104,115 @@ class CashmemoViewModel(
         _uiState.update { it.copy(activeDestination = destination) }
     }
 
-    // --- Scanner & OCR Actions ---
+    // --- Scanner, Gemini AI Vision & Quick-Edit Actions ---
 
     fun setOcrScriptMode(mode: OcrScriptMode) {
         _uiState.update { it.copy(scanner = it.scanner.copy(ocrScriptMode = mode)) }
     }
 
+    fun setTranslationMode(mode: TranslationMode) {
+        val current = _uiState.value.settings
+        if (current.translationMode == mode) return
+        viewModelScope.launch {
+            repository.saveSettings(current.copy(translationMode = mode))
+        }
+    }
+
+    fun openApiKeyPrompt() {
+        _uiState.update {
+            it.copy(scanner = it.scanner.copy(showApiKeyPrompt = true))
+        }
+    }
+
+    fun dismissApiKeyPrompt() {
+        _uiState.update {
+            it.copy(scanner = it.scanner.copy(showApiKeyPrompt = false, pendingUriForKeySetup = ""))
+        }
+    }
+
+    fun saveGeminiConfigAndResumeScan(apiKey: String, model: String) {
+        val cleanKey = apiKey.trim()
+        val cleanModel = model.trim().ifBlank { "gemini-3.5-flash" }
+        val pendingUri = _uiState.value.scanner.pendingUriForKeySetup
+        val updatedSettings = _uiState.value.settings.copy(
+            geminiApiKey = cleanKey,
+            geminiModel = cleanModel
+        )
+        viewModelScope.launch {
+            repository.saveSettings(updatedSettings)
+            _uiState.update {
+                it.copy(
+                    scanner = it.scanner.copy(
+                        showApiKeyPrompt = false,
+                        pendingUriForKeySetup = ""
+                    )
+                )
+            }
+            if (pendingUri.isNotBlank() && cleanKey.isNotEmpty()) {
+                runGeminiScan(Uri.parse(pendingUri), updatedSettings)
+            } else {
+                _events.emit(UiEvent.ShowMessage("Gemini settings saved"))
+            }
+        }
+    }
+
+    fun detectAvailableGeminiModels(apiKeyOverride: String? = null) {
+        val keyToUse = (apiKeyOverride ?: _uiState.value.settings.geminiApiKey).trim()
+        if (keyToUse.isEmpty()) {
+            viewModelScope.launch {
+                _events.emit(UiEvent.ShowMessage("Enter your Gemini API key first."))
+            }
+            return
+        }
+        _uiState.update { it.copy(scanner = it.scanner.copy(isDetectingModels = true)) }
+        viewModelScope.launch {
+            geminiService.listAvailableFlashModels(keyToUse)
+                .onSuccess { models ->
+                    _uiState.update {
+                        it.copy(
+                            scanner = it.scanner.copy(
+                                isDetectingModels = false,
+                                availableFlashModels = models
+                            )
+                        )
+                    }
+                    val summary = if (models.isEmpty()) "No Flash models returned" else "Found: ${models.take(3).joinToString(", ")}"
+                    _events.emit(UiEvent.ShowMessage(summary))
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(scanner = it.scanner.copy(isDetectingModels = false)) }
+                    _events.emit(UiEvent.ShowMessage(err.localizedMessage ?: "Model check failed"))
+                }
+        }
+    }
+
     fun processImageForOcr(uri: Uri) {
+        val settings = _uiState.value.settings
+        if (settings.geminiApiKey.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    scanner = it.scanner.copy(
+                        lastImageUri = uri.toString(),
+                        pendingUriForKeySetup = uri.toString(),
+                        showApiKeyPrompt = true,
+                        errorMessage = null
+                    )
+                )
+            }
+            return
+        }
+        runGeminiScan(uri, settings)
+    }
+
+    fun runOfflineMlKitFallback(uri: Uri) {
         val scriptMode = _uiState.value.scanner.ocrScriptMode
         _uiState.update {
             it.copy(
                 scanner = it.scanner.copy(
                     isProcessingOcr = true,
+                    processingLabel = "Running Offline ML Kit OCR...",
+                    showApiKeyPrompt = false,
+                    pendingUriForKeySetup = "",
                     lastImageUri = uri.toString(),
                     errorMessage = null
                 )
@@ -126,7 +228,7 @@ class CashmemoViewModel(
                                 scanner = it.scanner.copy(
                                     isProcessingOcr = false,
                                     extractedRawText = "",
-                                    errorMessage = "No readable text detected. Try clearer lighting or enter manually."
+                                    errorMessage = "No readable text detected offline. Use Gemini AI for handwritten notes."
                                 )
                             )
                         }
@@ -138,17 +240,35 @@ class CashmemoViewModel(
                             defaultMemoNumber = settings.nextMemoNumber.toString(),
                             sourceImageUri = uri.toString()
                         )
+                        val preview = AiScanPreview(
+                            memoNumber = draft.memoNumber,
+                            date = draft.date,
+                            customerName = draft.customerName,
+                            customerMobile = draft.customerMobile,
+                            customerAddress = draft.customerAddress,
+                            items = draft.items.map {
+                                AiExtractedItem(
+                                    originalText = it.description,
+                                    translatedName = it.description,
+                                    quantity = formatEditableNumber(it.quantity),
+                                    rate = formatEditableNumber(it.rate)
+                                )
+                            },
+                            rawTranscription = text,
+                            warnings = "Offline ML Kit used. Verify handwriting carefully.",
+                            modelUsed = "ML Kit Offline",
+                            sourceImageUri = uri.toString()
+                        )
                         _uiState.update {
                             it.copy(
                                 scanner = it.scanner.copy(
                                     isProcessingOcr = false,
                                     extractedRawText = text,
+                                    pendingAiReview = preview,
                                     errorMessage = null
-                                ),
-                                editor = draft.toEditorState(isNewDraft = true)
+                                )
                             )
                         }
-                        _events.emit(UiEvent.ShowMessage("Extracted ${draft.items.size} item(s). Review & save!"))
                     }
                 }
                 .onFailure { err ->
@@ -156,7 +276,7 @@ class CashmemoViewModel(
                         it.copy(
                             scanner = it.scanner.copy(
                                 isProcessingOcr = false,
-                                errorMessage = err.localizedMessage ?: "OCR failed"
+                                errorMessage = err.localizedMessage ?: "Offline OCR failed"
                             )
                         )
                     }
@@ -164,8 +284,108 @@ class CashmemoViewModel(
         }
     }
 
+    private fun runGeminiScan(uri: Uri, settings: BusinessSettings) {
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    isProcessingOcr = true,
+                    processingLabel = "Scanning & Translating (${settings.geminiModel})...",
+                    lastImageUri = uri.toString(),
+                    errorMessage = null
+                )
+            )
+        }
+
+        viewModelScope.launch {
+            geminiService.analyzeReceipt(
+                uri = uri,
+                apiKey = settings.geminiApiKey,
+                preferredModel = settings.geminiModel,
+                translationMode = settings.translationMode
+            ).onSuccess { preview ->
+                _uiState.update {
+                    it.copy(
+                        scanner = it.scanner.copy(
+                            isProcessingOcr = false,
+                            extractedRawText = preview.rawTranscription,
+                            pendingAiReview = preview,
+                            errorMessage = null
+                        )
+                    )
+                }
+                _events.emit(UiEvent.ShowMessage("AI extracted ${preview.items.size} item(s). Review & confirm!"))
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        scanner = it.scanner.copy(
+                            isProcessingOcr = false,
+                            errorMessage = err.localizedMessage ?: "Gemini scan failed"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissAiReviewDialog() {
+        _uiState.update { it.copy(scanner = it.scanner.copy(pendingAiReview = null)) }
+    }
+
+    fun applyAiReviewToEditor(edited: AiScanPreview) {
+        val settings = _uiState.value.settings
+        val memoItems = edited.items.mapIndexedNotNull { idx, item ->
+            val desc = item.translatedName.trim()
+            val qty = item.quantity.toDoubleOrNull() ?: 1.0
+            val rate = item.rate.toDoubleOrNull() ?: 0.0
+            if (desc.isEmpty() && rate == 0.0) null
+            else MemoItem(
+                serialNo = idx + 1,
+                description = desc,
+                quantity = qty,
+                rate = rate
+            )
+        }.ifEmpty { listOf(MemoItem(serialNo = 1)) }
+            .mapIndexed { idx, item -> item.copy(serialNo = idx + 1) }
+
+        val hasPaid = edited.paidAmount.isNotBlank()
+        _uiState.update {
+            it.copy(
+                activeDestination = AppDestination.EDITOR,
+                scanner = it.scanner.copy(pendingAiReview = null),
+                editor = EditorUiState(
+                    memoNumber = edited.memoNumber.ifBlank { settings.nextMemoNumber.toString() },
+                    date = edited.date.ifBlank { CashMemo.todayFormatted() },
+                    customerName = edited.customerName.trim(),
+                    customerMobile = edited.customerMobile.trim(),
+                    customerAddress = edited.customerAddress.trim(),
+                    items = memoItems,
+                    discountText = edited.discount,
+                    discountType = DiscountType.AMOUNT,
+                    taxPercentageText = edited.taxPercentage.ifBlank {
+                        if (settings.enableTax && settings.defaultTaxPercentage > 0) {
+                            formatEditableNumber(settings.defaultTaxPercentage)
+                        } else ""
+                    },
+                    previousDuesText = edited.previousDues,
+                    paidAmountText = edited.paidAmount,
+                    hasCustomPayment = hasPaid,
+                    rawOcrText = edited.rawTranscription,
+                    sourceImageUri = edited.sourceImageUri
+                )
+            )
+        }
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShowMessage("Pasted ${memoItems.size} item(s) into Cash Memo. Edit & Save!"))
+        }
+    }
+
     fun openReviewFromLastScan() {
-        navigateTo(AppDestination.EDITOR)
+        val pending = _uiState.value.scanner.pendingAiReview
+        if (pending != null) {
+            applyAiReviewToEditor(pending)
+        } else {
+            navigateTo(AppDestination.EDITOR)
+        }
     }
 
     fun startNewBlankMemo() {
@@ -270,7 +490,6 @@ class CashmemoViewModel(
 
     fun updatePaymentMethod(method: String) = updateEditor { it.copy(paymentMethod = method) }
     fun updatePaymentStatusNote(note: String) = updateEditor { it.copy(paymentStatusNote = note) }
-    fun updateNotes(notes: String) = updateEditor { it.copy(notes = notes) }
 
     fun saveCurrentMemo(printAfterSave: Boolean = false) {
         val editor = _uiState.value.editor
@@ -556,11 +775,12 @@ class CashmemoViewModel(
 
     class Factory(
         private val repository: CashmemoRepository,
-        private val ocrService: OcrScannerService
+        private val ocrService: OcrScannerService,
+        private val geminiService: GeminiVisionService
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return CashmemoViewModel(repository, ocrService) as T
+            return CashmemoViewModel(repository, ocrService, geminiService) as T
         }
     }
 }

@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
+import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -36,6 +37,9 @@ class SettingsDataStore(private val context: Context) {
         val TERMS_NOTE = stringPreferencesKey("terms_note")
         val SERVER_BASE_URL = stringPreferencesKey("server_base_url")
         val AUTO_SYNC_ENABLED = booleanPreferencesKey("auto_sync_enabled")
+        val GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
+        val GEMINI_MODEL = stringPreferencesKey("gemini_model")
+        val TRANSLATION_MODE = stringPreferencesKey("translation_mode")
     }
 
     private val defaults = BusinessSettings()
@@ -60,7 +64,10 @@ class SettingsDataStore(private val context: Context) {
             signerName = prefs[Keys.SIGNER_NAME] ?: defaults.signerName,
             termsNote = prefs[Keys.TERMS_NOTE]?.takeIf { it.isNotBlank() } ?: defaults.termsNote,
             serverBaseUrl = prefs[Keys.SERVER_BASE_URL] ?: defaults.serverBaseUrl,
-            autoSyncEnabled = prefs[Keys.AUTO_SYNC_ENABLED] ?: defaults.autoSyncEnabled
+            autoSyncEnabled = prefs[Keys.AUTO_SYNC_ENABLED] ?: defaults.autoSyncEnabled,
+            geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: defaults.geminiApiKey,
+            geminiModel = prefs[Keys.GEMINI_MODEL]?.takeIf { it.isNotBlank() } ?: defaults.geminiModel,
+            translationMode = TranslationMode.fromWire(prefs[Keys.TRANSLATION_MODE])
         )
     }
 
@@ -87,6 +94,9 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.TERMS_NOTE] = settings.termsNote.ifBlank { defaults.termsNote }
             prefs[Keys.SERVER_BASE_URL] = settings.serverBaseUrl.trim()
             prefs[Keys.AUTO_SYNC_ENABLED] = settings.autoSyncEnabled
+            prefs[Keys.GEMINI_API_KEY] = settings.geminiApiKey.trim()
+            prefs[Keys.GEMINI_MODEL] = settings.geminiModel.trim().ifBlank { defaults.geminiModel }
+            prefs[Keys.TRANSLATION_MODE] = settings.translationMode.wireValue
         }
     }
 

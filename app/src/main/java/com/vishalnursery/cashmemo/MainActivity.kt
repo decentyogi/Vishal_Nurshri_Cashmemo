@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             CashmemoTheme {
                 val viewModel: CashmemoViewModel = viewModel(
-                    factory = CashmemoViewModel.Factory(app.repository, app.ocrService)
+                    factory = CashmemoViewModel.Factory(app.repository, app.ocrService, app.geminiVisionService)
                 )
                 CashmemoAppRoot(viewModel = viewModel)
             }
@@ -144,8 +144,16 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
         when (uiState.activeDestination) {
             AppDestination.SCANNER -> ScannerScreen(
                 scannerState = uiState.scanner,
-                onSelectScriptMode = viewModel::setOcrScriptMode,
+                settings = uiState.settings,
+                onSelectTranslationMode = viewModel::setTranslationMode,
                 onImageCaptured = viewModel::processImageForOcr,
+                onOpenApiKeySetup = viewModel::openApiKeyPrompt,
+                onDismissApiKeyPrompt = viewModel::dismissApiKeyPrompt,
+                onSaveGeminiConfig = viewModel::saveGeminiConfigAndResumeScan,
+                onDetectFlashModels = viewModel::detectAvailableGeminiModels,
+                onRunOfflineFallback = viewModel::runOfflineMlKitFallback,
+                onConfirmAiReview = viewModel::applyAiReviewToEditor,
+                onDismissAiReview = viewModel::dismissAiReviewDialog,
                 onOpenReview = viewModel::openReviewFromLastScan,
                 onNewBlankMemo = viewModel::startNewBlankMemo,
                 modifier = contentModifier
@@ -215,7 +223,10 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
             AppDestination.SETTINGS -> SettingsScreen(
                 settings = uiState.settings,
                 isSyncing = uiState.isSyncing,
+                availableFlashModels = uiState.scanner.availableFlashModels,
+                isDetectingModels = uiState.scanner.isDetectingModels,
                 onSaveSettings = viewModel::saveSettings,
+                onDetectFlashModels = viewModel::detectAvailableGeminiModels,
                 onSyncNow = viewModel::syncNow,
                 onExportJsonBackup = viewModel::exportJsonBackup,
                 onImportJsonBackup = viewModel::importBackupJson,

@@ -114,7 +114,46 @@ data class BusinessSettings(
     val signerName: String = "VISHAL NURSERY",
     val termsNote: String = "Thanks For Visiting Vishal Nurshri !! Visit Again... Thanks",
     val serverBaseUrl: String = "",
-    val autoSyncEnabled: Boolean = false
+    val autoSyncEnabled: Boolean = false,
+    val geminiApiKey: String = "",
+    val geminiModel: String = "gemini-3.5-flash",
+    val translationMode: TranslationMode = TranslationMode.ENGLISH_WITH_HINDI
+)
+
+enum class TranslationMode(val wireValue: String, val label: String) {
+    ENGLISH_WITH_HINDI("english_with_hindi", "English + Hindi"),
+    ENGLISH_ONLY("english_only", "English Only"),
+    ORIGINAL("original", "Original Script");
+
+    companion object {
+        fun fromWire(value: String?): TranslationMode =
+            entries.firstOrNull { it.wireValue == value } ?: ENGLISH_WITH_HINDI
+    }
+}
+
+data class AiExtractedItem(
+    val id: String = "ai_${UUID.randomUUID().toString().take(6)}",
+    val originalText: String = "",
+    val translatedName: String = "",
+    val quantity: String = "1",
+    val rate: String = "0"
+)
+
+data class AiScanPreview(
+    val memoNumber: String = "",
+    val date: String = "",
+    val customerName: String = "",
+    val customerMobile: String = "",
+    val customerAddress: String = "",
+    val discount: String = "",
+    val taxPercentage: String = "",
+    val previousDues: String = "",
+    val paidAmount: String = "",
+    val items: List<AiExtractedItem> = emptyList(),
+    val rawTranscription: String = "",
+    val warnings: String = "",
+    val modelUsed: String = "",
+    val sourceImageUri: String = ""
 )
 
 enum class MemoFilter(val label: String, val wireValue: String) {

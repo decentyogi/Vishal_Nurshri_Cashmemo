@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Cream Cashmemo Receipt Card -->
+    <path
+        android:fillColor="#FFFDF9"
+        android:pathData="M30,24h48c2.2,0 4,1.8 4,4v54l-6,-4l-6,4l-6,-4l-6,4l-6,-4l-6,4l-6,-4l-6,4V28C26,25.8 27.8,24 30,24z" />
+    <!-- Nursery Leaf Accent -->
+    <path
+        android:fillColor="#1B6B3A"
+        android:pathData="M54,34c-8,0 -15,7 -15,15c0,7 6,12 15,12c9,0 15,-5 15,-12C69,41 62,34 54,34z" />
+    <path
+        android:fillColor="#E6F4EA"
+        android:pathData="M54,38v21M54,48l7,-5M54,52l-7,-5"
+        android:strokeWidth="2.2"
+        android:strokeColor="#E6F4EA"
+        android:strokeLineCap="round" />
+    <!-- Memo Lines -->
+    <path
+        android:fillColor="#C98A16"
+        android:pathData="M36,66h36v3H36zM36,72h24v3H36z" />
+</vector>

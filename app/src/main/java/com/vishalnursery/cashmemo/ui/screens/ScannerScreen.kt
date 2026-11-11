@@ -769,8 +769,8 @@ private fun AiReviewEditDialog(
                     if (preview.warnings.isNotBlank()) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = NurseryColors.Gold.copy(alpha = 0.18f),
-                            border = BorderStroke(1.dp, NurseryColors.Gold)
+                            color = NurseryColors.GoldAccent.copy(alpha = 0.18f),
+                            border = BorderStroke(1.dp, NurseryColors.GoldAccent)
                         ) {
                             Row(
                                 modifier = Modifier

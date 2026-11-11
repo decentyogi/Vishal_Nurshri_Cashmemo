@@ -63,39 +63,43 @@ class GeminiVisionService(private val context: Context) {
         runCatching {
             val cleanKey = apiKey.trim()
             require(cleanKey.isNotEmpty()) { "Gemini API key is empty" }
-            val request = Request.Builder()
-                .url("https://generativelanguage.googleapis.com/v1beta/models")
-                .addHeader("x-goog-api-key", cleanKey)
-                .get()
-                .build()
+            fetchAvailableFlashModels(cleanKey)
+        }
+    }
 
-            httpClient.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    error(extractApiErrorMessage(response.code, body))
-                }
-                val root = JSONObject(body)
-                val modelsArr = root.optJSONArray("models") ?: JSONArray()
-                val candidates = mutableListOf<String>()
-                for (i in 0 until modelsArr.length()) {
-                    val obj = modelsArr.getJSONObject(i)
-                    val fullName = obj.optString("name", "") // e.g. "models/gemini-3.5-flash"
-                    val shortName = fullName.removePrefix("models/")
-                    val methods = obj.optJSONArray("supportedGenerationMethods")
-                    val supportsGen = (0 until (methods?.length() ?: 0)).any {
-                        methods?.optString(it) == "generateContent"
-                    }
-                    if (supportsGen &&
-                        shortName.contains("flash", ignoreCase = true) &&
-                        !shortName.contains("tts", ignoreCase = true) &&
-                        !shortName.contains("audio", ignoreCase = true) &&
-                        !shortName.contains("image", ignoreCase = true)
-                    ) {
-                        candidates.add(shortName)
-                    }
-                }
-                sortFlashModels(candidates)
+    private fun fetchAvailableFlashModels(cleanKey: String): List<String> {
+        val request = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models")
+            .addHeader("x-goog-api-key", cleanKey)
+            .get()
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                error(extractApiErrorMessage(response.code, body))
             }
+            val root = JSONObject(body)
+            val modelsArr = root.optJSONArray("models") ?: JSONArray()
+            val candidates = mutableListOf<String>()
+            for (i in 0 until modelsArr.length()) {
+                val obj = modelsArr.getJSONObject(i)
+                val fullName = obj.optString("name", "") // e.g. "models/gemini-3.5-flash"
+                val shortName = fullName.removePrefix("models/")
+                val methods = obj.optJSONArray("supportedGenerationMethods")
+                val supportsGen = (0 until (methods?.length() ?: 0)).any {
+                    methods?.optString(it) == "generateContent"
+                }
+                if (supportsGen &&
+                    shortName.contains("flash", ignoreCase = true) &&
+                    !shortName.contains("tts", ignoreCase = true) &&
+                    !shortName.contains("audio", ignoreCase = true) &&
+                    !shortName.contains("image", ignoreCase = true)
+                ) {
+                    candidates.add(shortName)
+                }
+            }
+            return sortFlashModels(candidates)
         }
     }
 
@@ -164,7 +168,7 @@ class GeminiVisionService(private val context: Context) {
         val msg = err?.message.orEmpty()
         // If model ID isn't available (404 / NOT_FOUND), query live available Flash models and retry
         if (msg.contains("404") || msg.contains("not found", ignoreCase = true) || msg.contains("NOT_FOUND")) {
-            val available = listAvailableFlashModels(apiKey).getOrNull().orEmpty()
+            val available = runCatching { fetchAvailableFlashModels(apiKey) }.getOrNull().orEmpty()
             val fallbacks = (available + listOf(
                 "gemini-3.5-flash",
                 "gemini-3.8-flash",

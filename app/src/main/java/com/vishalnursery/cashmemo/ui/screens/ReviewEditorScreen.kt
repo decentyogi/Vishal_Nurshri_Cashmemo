@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Save
@@ -59,6 +61,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DiscountType
@@ -95,7 +98,10 @@ fun ReviewEditorScreen(
     onUpdatePaidAmount: (String) -> Unit,
     onUpdatePaymentMethod: (String) -> Unit,
     onUpdatePaymentNote: (String) -> Unit,
+    onSelectExportLayout: (BillExportLayout) -> Unit,
     onSaveMemo: (Boolean) -> Unit,
+    onShareAsJpeg: () -> Unit,
+    onShareAsPdf: () -> Unit,
     onNewMemo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -674,7 +680,63 @@ fun ReviewEditorScreen(
             }
         }
 
-        // 5. Action Buttons Row
+        // 5. Bill Export / Print Layout Quick Selector
+        Card(
+            colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
+            border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "BILL EXPORT / PRINT LAYOUT",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = NurseryColors.Maroon
+                    )
+                    if (settings.billExportLayout == BillExportLayout.CLASSIC_NURSERY) {
+                        val validCount = editorState.items.count { it.description.isNotBlank() || it.amount > 0.0 }
+                            .coerceAtLeast(1)
+                        val pages = ((validCount - 1) / 15) + 1
+                        Text(
+                            text = "15/pg • $pages ${if (pages == 1) "Page" else "Pages"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = NurseryColors.BotanicalGreen
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BillExportLayout.entries.forEach { layout ->
+                        FilterChip(
+                            selected = settings.billExportLayout == layout,
+                            onClick = { onSelectExportLayout(layout) },
+                            label = {
+                                Text(
+                                    text = layout.shortLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // 6. Action Buttons Row (UPI QR, Save, Print)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -709,6 +771,54 @@ fun ReviewEditorScreen(
                 Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Print", maxLines = 1, softWrap = false)
+            }
+        }
+
+        // 7. High-Res Share Pills (Send As JPEG & Send As PDF)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedButton(
+                onClick = onShareAsJpeg,
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(1.3.dp, NurseryColors.BotanicalGreen),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    Icons.Default.Image,
+                    contentDescription = null,
+                    tint = NurseryColors.BotanicalGreen,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Send As JPEG",
+                    color = NurseryColors.BotanicalGreen,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Button(
+                onClick = onShareAsPdf,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.MaroonDark),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Send As PDF",
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
 

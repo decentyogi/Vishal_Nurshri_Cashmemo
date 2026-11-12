@@ -117,8 +117,19 @@ data class BusinessSettings(
     val autoSyncEnabled: Boolean = false,
     val geminiApiKey: String = "",
     val geminiModel: String = "gemini-3.5-flash",
-    val translationMode: TranslationMode = TranslationMode.ENGLISH_WITH_HINDI
+    val translationMode: TranslationMode = TranslationMode.ENGLISH_WITH_HINDI,
+    val billExportLayout: BillExportLayout = BillExportLayout.CLASSIC_NURSERY
 )
+
+enum class BillExportLayout(val wireValue: String, val label: String, val shortLabel: String) {
+    CLASSIC_NURSERY("classic_nursery", "Classic Nursery Bill (15-Item Paginated)", "Classic Nursery Bill"),
+    MODERN_RECEIPT("modern_receipt", "Modern Receipt", "Modern Receipt");
+
+    companion object {
+        fun fromWire(value: String?): BillExportLayout =
+            entries.firstOrNull { it.wireValue == value } ?: CLASSIC_NURSERY
+    }
+}
 
 enum class TranslationMode(val wireValue: String, val label: String) {
     ENGLISH_WITH_HINDI("english_with_hindi", "English + Hindi"),

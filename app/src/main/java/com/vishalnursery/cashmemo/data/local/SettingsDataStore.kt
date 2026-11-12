@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import kotlinx.coroutines.flow.Flow
@@ -40,6 +41,7 @@ class SettingsDataStore(private val context: Context) {
         val GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
         val GEMINI_MODEL = stringPreferencesKey("gemini_model")
         val TRANSLATION_MODE = stringPreferencesKey("translation_mode")
+        val BILL_EXPORT_LAYOUT = stringPreferencesKey("bill_export_layout")
     }
 
     private val defaults = BusinessSettings()
@@ -67,7 +69,8 @@ class SettingsDataStore(private val context: Context) {
             autoSyncEnabled = prefs[Keys.AUTO_SYNC_ENABLED] ?: defaults.autoSyncEnabled,
             geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: defaults.geminiApiKey,
             geminiModel = prefs[Keys.GEMINI_MODEL]?.takeIf { it.isNotBlank() } ?: defaults.geminiModel,
-            translationMode = TranslationMode.fromWire(prefs[Keys.TRANSLATION_MODE])
+            translationMode = TranslationMode.fromWire(prefs[Keys.TRANSLATION_MODE]),
+            billExportLayout = BillExportLayout.fromWire(prefs[Keys.BILL_EXPORT_LAYOUT])
         )
     }
 
@@ -97,6 +100,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.GEMINI_API_KEY] = settings.geminiApiKey.trim()
             prefs[Keys.GEMINI_MODEL] = settings.geminiModel.trim().ifBlank { defaults.geminiModel }
             prefs[Keys.TRANSLATION_MODE] = settings.translationMode.wireValue
+            prefs[Keys.BILL_EXPORT_LAYOUT] = settings.billExportLayout.wireValue
         }
     }
 

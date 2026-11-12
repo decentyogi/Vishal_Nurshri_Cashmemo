@@ -86,5 +86,7 @@ data class CashmemoUiState(
 sealed interface UiEvent {
     data class ShowMessage(val message: String) : UiEvent
     data class TriggerPrint(val memo: CashMemo, val settings: BusinessSettings) : UiEvent
+    data class ShareMemoImages(val memo: CashMemo, val settings: BusinessSettings) : UiEvent
+    data class ShareMemoPdf(val memo: CashMemo, val settings: BusinessSettings) : UiEvent
     data class ShareFile(val fileName: String, val mimeType: String, val content: String) : UiEvent
 }

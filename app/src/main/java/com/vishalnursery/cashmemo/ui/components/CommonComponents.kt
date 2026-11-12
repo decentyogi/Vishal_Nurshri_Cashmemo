@@ -1,22 +1,21 @@
 package com.vishalnursery.cashmemo.ui.components
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
+import android.os.Bundle
+import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
+import android.print.PageRange
 import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintDocumentInfo
 import android.print.PrintManager
-import android.text.Html
-import android.util.Base64
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.print.pdf.PrintedPdfDocument
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,8 +39,8 @@ import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.QrCodeGenerator
-import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 
 @Composable
 fun UpiQrDialog(
@@ -165,146 +164,131 @@ object ShareExportHelper {
             type = mimeType
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, fileName)
+            clipData = ClipData.newRawUri(fileName, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Export $fileName"))
     }
+
+    fun shareImageFiles(context: Context, files: List<File>, subject: String) {
+        if (files.isEmpty()) return
+        val authority = "${context.packageName}.fileprovider"
+        val uris = ArrayList(files.map { FileProvider.getUriForFile(context, authority, it) })
+
+        val clipData = ClipData.newRawUri(subject, uris.first()).apply {
+            for (i in 1 until uris.size) {
+                addItem(ClipData.Item(uris[i]))
+            }
+        }
+
+        val intent = if (uris.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "image/jpeg"
+                putExtra(Intent.EXTRA_STREAM, uris.first())
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+                this.clipData = clipData
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "image/jpeg"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                putExtra(Intent.EXTRA_SUBJECT, "$subject (${uris.size} Pages)")
+                this.clipData = clipData
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        context.startActivity(Intent.createChooser(intent, "Share $subject"))
+    }
+
+    fun sharePdfFile(context: Context, file: File, subject: String) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            clipData = ClipData.newRawUri(subject, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Share $subject"))
+    }
 }
 
 object CashmemoPrintHelper {
-    private var activeWebView: WebView? = null
 
     fun printCashMemo(context: Context, memo: CashMemo, businessSettings: BusinessSettings) {
-        val html = buildSlipHtml(memo, businessSettings)
-        val webView = WebView(context).apply {
-            this.settings.javaScriptEnabled = false
-        }
-        activeWebView = webView
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
-            override fun onPageFinished(view: WebView?, url: String?) {
-                val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
-                val adapter = webView.createPrintDocumentAdapter("CashMemo_${memo.memoNumber}")
-                printManager.print(
-                    "CashMemo_${memo.memoNumber}",
-                    adapter,
-                    PrintAttributes.Builder().build()
-                )
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
+        val jobName = "CashMemo_${memo.memoNumber}"
+
+        val adapter = object : PrintDocumentAdapter() {
+            private var activeAttributes: PrintAttributes = PrintAttributes.Builder()
+                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                .build()
+
+            override fun onLayout(
+                oldAttributes: PrintAttributes?,
+                newAttributes: PrintAttributes,
+                cancellationSignal: CancellationSignal?,
+                callback: LayoutResultCallback,
+                extras: Bundle?
+            ) {
+                if (cancellationSignal?.isCanceled == true) {
+                    callback.onLayoutCancelled()
+                    return
+                }
+                activeAttributes = newAttributes
+                val pageCount = BillDocumentRenderer.calculatePageCount(memo, businessSettings.billExportLayout)
+                val info = PrintDocumentInfo.Builder("$jobName.pdf")
+                    .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                    .setPageCount(pageCount)
+                    .build()
+                callback.onLayoutFinished(info, true)
+            }
+
+            override fun onWrite(
+                pages: Array<out PageRange>,
+                destination: ParcelFileDescriptor,
+                cancellationSignal: CancellationSignal?,
+                callback: WriteResultCallback
+            ) {
+                if (cancellationSignal?.isCanceled == true) {
+                    callback.onWriteCancelled()
+                    return
+                }
+                val pdfDoc = PrintedPdfDocument(context, activeAttributes)
+                try {
+                    val mediaSize = activeAttributes.mediaSize ?: PrintAttributes.MediaSize.ISO_A4
+                    val widthPt = ((mediaSize.widthMils / 1000f) * 72f).toInt().coerceAtLeast(BillDocumentRenderer.PDF_A4_W)
+                    val heightPt = ((mediaSize.heightMils / 1000f) * 72f).toInt().coerceAtLeast(BillDocumentRenderer.PDF_A4_H)
+
+                    BillDocumentRenderer.renderToPdfDocument(
+                        pdfDocument = pdfDoc,
+                        pageWidthPt = widthPt,
+                        pageHeightPt = heightPt,
+                        memo = memo,
+                        settings = businessSettings
+                    )
+
+                    if (cancellationSignal?.isCanceled == true) {
+                        callback.onWriteCancelled()
+                        return
+                    }
+                    FileOutputStream(destination.fileDescriptor).use { out ->
+                        pdfDoc.writeTo(out)
+                        out.flush()
+                    }
+                    callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+                } catch (e: Exception) {
+                    callback.onWriteFailed(e.localizedMessage ?: "Print rendering failed")
+                } finally {
+                    pdfDoc.close()
+                }
             }
         }
-        webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+
+        val defaultAttrs = PrintAttributes.Builder()
+            .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+            .build()
+        printManager.print(jobName, adapter, defaultAttrs)
     }
-
-    private fun buildSlipHtml(memo: CashMemo, settings: BusinessSettings): String {
-        val upiUri = IndianCurrencyFormatter.buildUpiUri(
-            upiVpa = settings.upiVpa,
-            payeeName = settings.shopNameEnglish,
-            amount = memo.totalPayable
-        )
-        val qrBase64 = QrCodeGenerator.generateBitmap(upiUri, 260)?.let { bmp ->
-            val out = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
-            Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-        }.orEmpty()
-
-        val rows = memo.items.mapIndexed { idx, item ->
-            """
-            <tr>
-              <td class="c">${idx + 1}</td>
-              <td>${esc(item.description)}</td>
-              <td class="c">${formatQty(item.quantity)}</td>
-              <td class="r">${IndianCurrencyFormatter.formatInr(item.rate, settings.currencySymbol)}</td>
-              <td class="r"><b>${IndianCurrencyFormatter.formatInr(item.amount, settings.currencySymbol)}</b></td>
-            </tr>
-            """.trimIndent()
-        }.joinToString("\n")
-
-        val words = IndianCurrencyFormatter.convertToIndianRupees(memo.totalPayable)
-
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8" />
-          <style>
-            body { font-family: sans-serif; color: #8B1527; background: #FFFDF9; padding: 14px; }
-            .outer { border: 2.5px solid #8B1527; padding: 4px; }
-            .inner { border: 1px solid #8B1527; padding: 12px; }
-            .header { text-align: center; border-bottom: 1.5px solid #8B1527; padding-bottom: 8px; }
-            .title { font-size: 22px; font-weight: 900; margin: 2px 0; }
-            .sub { font-size: 11px; color: #4A1019; }
-            .meta { display: flex; justify-content: space-between; font-size: 12px; margin: 8px 0; }
-            .cust { text-align: center; border: 1px solid #8B1527; padding: 6px; margin-bottom: 8px; font-size: 12px; color: #1F1A1C; }
-            table { width: 100%; border-collapse: collapse; font-size: 12px; color: #1F1A1C; }
-            th, td { border: 1px solid #8B1527; padding: 6px; }
-            th { background: #FDF2F4; color: #8B1527; }
-            .c { text-align: center; }
-            .r { text-align: right; font-family: monospace; }
-            .footer { display: flex; justify-content: space-between; margin-top: 12px; font-size: 12px; color: #1F1A1C; }
-            .totals { width: 45%; }
-            .totals div { display: flex; justify-content: space-between; padding: 2px 0; }
-            .grand { font-weight: 900; border-top: 1.5px solid #8B1527; border-bottom: 1.5px solid #8B1527; padding: 4px 0 !important; color: #8B1527; }
-          </style>
-        </head>
-        <body>
-          <div class="outer"><div class="inner">
-            <div class="header">
-              <div class="sub">CASH MEMO | GSTIN: ${esc(settings.gstin)}</div>
-              <div class="title">${esc(settings.shopNameHindi)} (${esc(settings.shopNameEnglish)})</div>
-              <div class="sub">${esc(settings.tagline)}</div>
-              <div class="sub">${esc(settings.addressLine1)}, ${esc(settings.addressLine2)} | Mob: ${esc(settings.phone)}</div>
-            </div>
-            <div class="meta">
-              <div><b>Memo #:</b> ${esc(memo.memoNumber)}</div>
-              <div><b>Date:</b> ${esc(memo.date)}</div>
-            </div>
-            <div class="cust">
-              <b>${esc(memo.customerName.ifBlank { "Walk-in Customer" })}</b>
-              ${if (memo.customerAddress.isNotBlank()) " — ${esc(memo.customerAddress)}" else ""}
-              ${if (memo.customerMobile.isNotBlank()) " (Mob: ${esc(memo.customerMobile)})" else ""}
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th style="width:7%">#</th>
-                  <th style="width:50%">Item / Plant Description</th>
-                  <th style="width:10%">Qty</th>
-                  <th style="width:16%">Rate</th>
-                  <th style="width:17%">Amount</th>
-                </tr>
-              </thead>
-              <tbody>$rows</tbody>
-            </table>
-            <div class="footer">
-              <div style="width:50%">
-                <div><b>In Words:</b> <i>${esc(words)}</i></div>
-                ${if (qrBase64.isNotEmpty()) """
-                  <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-                    <img src="data:image/png;base64,$qrBase64" width="84" height="84" style="border:1px solid #8B1527;"/>
-                    <div style="font-size:10px;"><b>UPI:</b> ${esc(settings.upiVpa)}<br/>Scan to Pay</div>
-                  </div>
-                """ else ""}
-              </div>
-              <div class="totals">
-                <div><span>Subtotal</span><span>${IndianCurrencyFormatter.formatInr(memo.subtotal, settings.currencySymbol)}</span></div>
-                ${if (memo.discount > 0) "<div><span>Discount</span><span>- ${IndianCurrencyFormatter.formatInr(memo.discount, settings.currencySymbol)}</span></div>" else ""}
-                ${if (memo.taxAmount > 0) "<div><span>Tax (${memo.taxPercentage}%)</span><span>${IndianCurrencyFormatter.formatInr(memo.taxAmount, settings.currencySymbol)}</span></div>" else ""}
-                ${if (memo.previousDues > 0) "<div><span>Previous Dues</span><span>+ ${IndianCurrencyFormatter.formatInr(memo.previousDues, settings.currencySymbol)}</span></div>" else ""}
-                <div class="grand"><span>Total Payable</span><span>${IndianCurrencyFormatter.formatInr(memo.totalPayable, settings.currencySymbol)}</span></div>
-                <div><span>Paid (${esc(memo.paymentMethod)})</span><span>${IndianCurrencyFormatter.formatInr(memo.paidAmount, settings.currencySymbol)}</span></div>
-                ${if (memo.hasPendingDue) "<div style='color:#C62828;font-weight:bold'><span>Carry Forward</span><span>${IndianCurrencyFormatter.formatInr(memo.balanceDue, settings.currencySymbol)}</span></div>" else ""}
-              </div>
-            </div>
-            <div style="margin-top:16px; display:flex; justify-content:space-between; font-size:11px;">
-              <div>${esc(settings.termsNote)}</div>
-              <div><b>For ${esc(settings.signerName)}</b></div>
-            </div>
-          </div></div>
-        </body>
-        </html>
-        """.trimIndent()
-    }
-
-    private fun esc(input: String): String = Html.escapeHtml(input)
-    private fun formatQty(q: Double): String = if (q % 1.0 == 0.0) q.toLong().toString() else q.toString()
 }

@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -56,6 +56,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.vishalnursery.cashmemo.BuildConfig
+import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
@@ -169,6 +170,45 @@ fun SettingsScreen(
                     label = { Text("Terms & Footer Note") },
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Text(
+                    text = "Default Bill Export / Print Layout",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BillExportLayout.entries.forEach { layout ->
+                        FilterChip(
+                            selected = draft.billExportLayout == layout,
+                            onClick = { draft = draft.copy(billExportLayout = layout) },
+                            label = {
+                                Text(
+                                    text = layout.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = { onSaveSettings(draft) },
+                    colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Save Store & Layout Settings", maxLines = 1, softWrap = false)
+                }
             }
         }
 
@@ -388,7 +428,7 @@ fun SettingsScreen(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Export JSON", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }
@@ -397,7 +437,7 @@ fun SettingsScreen(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Restore JSON", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                     }

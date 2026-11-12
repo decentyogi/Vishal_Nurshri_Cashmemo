@@ -9,6 +9,7 @@ import com.vishalnursery.cashmemo.data.ocr.OcrScannerService
 import com.vishalnursery.cashmemo.data.repository.CashmemoRepository
 import com.vishalnursery.cashmemo.domain.model.AiExtractedItem
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
+import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
@@ -491,18 +492,40 @@ class CashmemoViewModel(
     fun updatePaymentMethod(method: String) = updateEditor { it.copy(paymentMethod = method) }
     fun updatePaymentStatusNote(note: String) = updateEditor { it.copy(paymentStatusNote = note) }
 
-    fun saveCurrentMemo(printAfterSave: Boolean = false) {
+    fun setBillExportLayout(layout: BillExportLayout) {
+        val current = _uiState.value.settings
+        if (current.billExportLayout == layout) return
+        viewModelScope.launch {
+            repository.saveSettings(current.copy(billExportLayout = layout))
+        }
+    }
+
+    fun shareCurrentEditorAsJpeg() {
+        val memo = buildCashMemoFromEditor() ?: return
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShareMemoImages(memo, _uiState.value.settings))
+        }
+    }
+
+    fun shareCurrentEditorAsPdf() {
+        val memo = buildCashMemoFromEditor() ?: return
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShareMemoPdf(memo, _uiState.value.settings))
+        }
+    }
+
+    private fun buildCashMemoFromEditor(): CashMemo? {
         val editor = _uiState.value.editor
         val validItems = editor.items.filter { it.description.isNotBlank() || it.amount > 0.0 }
         if (validItems.isEmpty()) {
             viewModelScope.launch {
-                _events.emit(UiEvent.ShowMessage("Add at least one item before saving."))
+                _events.emit(UiEvent.ShowMessage("Add at least one item before saving or sharing."))
             }
-            return
+            return null
         }
 
         val calc = editor.calculation
-        val memoToSave = CashMemo(
+        return CashMemo(
             id = editor.editingMemoId ?: CashMemo.newMemoId(),
             memoNumber = editor.memoNumber.ifBlank { _uiState.value.settings.nextMemoNumber.toString() },
             date = editor.date.ifBlank { CashMemo.todayFormatted() },
@@ -528,6 +551,10 @@ class CashmemoViewModel(
             sourceImageUri = editor.sourceImageUri,
             createdAt = editor.createdAt
         )
+    }
+
+    fun saveCurrentMemo(printAfterSave: Boolean = false) {
+        val memoToSave = buildCashMemoFromEditor() ?: return
 
         viewModelScope.launch {
             repository.saveMemo(memoToSave)

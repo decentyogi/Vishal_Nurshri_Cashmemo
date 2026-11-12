@@ -35,8 +35,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.vishalnursery.cashmemo.ui.components.BillDocumentRenderer
 import com.vishalnursery.cashmemo.ui.components.CashmemoPrintHelper
 import com.vishalnursery.cashmemo.ui.components.ShareExportHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.vishalnursery.cashmemo.ui.screens.CatalogLedgerScreen
 import com.vishalnursery.cashmemo.ui.screens.HistoryDashboardScreen
 import com.vishalnursery.cashmemo.ui.screens.ReviewEditorScreen
@@ -76,6 +79,34 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
             when (event) {
                 is UiEvent.ShowMessage -> snackbarHostState.showSnackbar(event.message)
                 is UiEvent.TriggerPrint -> CashmemoPrintHelper.printCashMemo(context, event.memo, event.settings)
+                is UiEvent.ShareMemoImages -> {
+                    runCatching {
+                        val files = withContext(Dispatchers.Default) {
+                            BillDocumentRenderer.renderJpegFiles(context, event.memo, event.settings)
+                        }
+                        ShareExportHelper.shareImageFiles(
+                            context = context,
+                            files = files,
+                            subject = "CashMemo_${event.memo.memoNumber}"
+                        )
+                    }.onFailure { err ->
+                        snackbarHostState.showSnackbar("JPEG export failed: ${err.localizedMessage}")
+                    }
+                }
+                is UiEvent.ShareMemoPdf -> {
+                    runCatching {
+                        val file = withContext(Dispatchers.Default) {
+                            BillDocumentRenderer.renderPdfFile(context, event.memo, event.settings)
+                        }
+                        ShareExportHelper.sharePdfFile(
+                            context = context,
+                            file = file,
+                            subject = "CashMemo_${event.memo.memoNumber}.pdf"
+                        )
+                    }.onFailure { err ->
+                        snackbarHostState.showSnackbar("PDF export failed: ${err.localizedMessage}")
+                    }
+                }
                 is UiEvent.ShareFile -> ShareExportHelper.shareTextFile(
                     context = context,
                     fileName = event.fileName,
@@ -185,7 +216,10 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 onUpdatePaidAmount = viewModel::updatePaidAmount,
                 onUpdatePaymentMethod = viewModel::updatePaymentMethod,
                 onUpdatePaymentNote = viewModel::updatePaymentStatusNote,
+                onSelectExportLayout = viewModel::setBillExportLayout,
                 onSaveMemo = viewModel::saveCurrentMemo,
+                onShareAsJpeg = viewModel::shareCurrentEditorAsJpeg,
+                onShareAsPdf = viewModel::shareCurrentEditorAsPdf,
                 onNewMemo = viewModel::startNewBlankMemo,
                 modifier = contentModifier
             )

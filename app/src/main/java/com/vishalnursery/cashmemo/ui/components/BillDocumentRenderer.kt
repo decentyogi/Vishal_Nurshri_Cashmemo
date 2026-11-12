@@ -607,7 +607,7 @@ object BillDocumentRenderer {
             canvas = canvas,
             text = footerGreeting,
             x = cLeft,
-            y = 2432f,
+            baselineY = 2432f,
             maxWidth = (cRight - 480f) - cLeft,
             paint = textPaint(23f, CLASSIC_MAROON, bold = true)
         )

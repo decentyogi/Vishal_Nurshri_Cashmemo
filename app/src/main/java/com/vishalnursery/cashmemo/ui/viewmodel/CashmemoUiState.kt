@@ -45,11 +45,11 @@ data class EditorUiState(
     val calculation: MemoCalculationResult
         get() = MemoCalculationResult.compute(
             items = items,
-            discount = discountText.toDoubleOrNull() ?: 0.0,
+            discount = discountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
             discountType = discountType,
-            taxPercentage = taxPercentageText.toDoubleOrNull() ?: 0.0,
-            previousDues = previousDuesText.toDoubleOrNull() ?: 0.0,
-            paidAmount = paidAmountText.toDoubleOrNull() ?: 0.0,
+            taxPercentage = taxPercentageText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
+            previousDues = previousDuesText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
+            paidAmount = paidAmountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
             hasCustomPayment = hasCustomPayment
         )
 }
@@ -76,6 +76,7 @@ data class CashmemoUiState(
     val allMemos: List<CashMemo> = emptyList(),
     val filteredMemos: List<CashMemo> = emptyList(),
     val searchQuery: String = "",
+    val selectedHistoryDate: String = "",
     val historyFilter: MemoFilter = MemoFilter.ALL,
     val dashboardStats: DashboardStats = DashboardStats(),
     val customers: List<CustomerProfile> = emptyList(),

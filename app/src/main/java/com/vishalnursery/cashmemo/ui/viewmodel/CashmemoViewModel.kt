@@ -40,6 +40,7 @@ class CashmemoViewModel(
 ) : ViewModel() {
 
     private val searchQueryFlow = MutableStateFlow("")
+    private val selectedHistoryDateFlow = MutableStateFlow("")
     private val historyFilterFlow = MutableStateFlow(MemoFilter.ALL)
 
     private val _uiState = MutableStateFlow(CashmemoUiState())
@@ -61,17 +62,19 @@ class CashmemoViewModel(
                 repository.customersFlow,
                 repository.plantRatesFlow,
                 repository.settingsFlow,
-                combine(searchQueryFlow, historyFilterFlow) { q, f -> q to f }
-            ) { memos, customers, rates, settings, queryAndFilter ->
-                val (query, filter) = queryAndFilter
-                val filtered = filterMemos(memos, query, filter)
+                combine(searchQueryFlow, selectedHistoryDateFlow, historyFilterFlow) { q, d, f ->
+                    Triple(q, d, f)
+                }
+            ) { memos, customers, rates, settings, filterTriple ->
+                val (query, selectedDate, filter) = filterTriple
+                val filtered = filterMemos(memos, query, selectedDate, filter)
                 val stats = DashboardStats(
                     totalMemos = memos.size,
                     totalSales = round2(memos.sumOf { it.totalPayable }),
                     totalCollected = round2(memos.sumOf { it.paidAmount }),
                     totalPendingDues = round2(memos.sumOf { it.balanceDue })
                 )
-                QuadrupleResult(memos, filtered, customers, rates, settings, query, filter, stats)
+                QuadrupleResult(memos, filtered, customers, rates, settings, query, selectedDate, filter, stats)
             }.collect { data ->
                 _uiState.update { current ->
                     val updatedEditor = if (!initializedEditorNumber && current.editor.editingMemoId == null) {
@@ -92,6 +95,7 @@ class CashmemoViewModel(
                         plantRates = data.rates,
                         settings = data.settings,
                         searchQuery = data.query,
+                        selectedHistoryDate = data.selectedDate,
                         historyFilter = data.filter,
                         dashboardStats = data.stats,
                         editor = updatedEditor
@@ -461,12 +465,12 @@ class CashmemoViewModel(
     }
 
     fun updateItemQuantity(index: Int, qtyText: String) {
-        val qty = qtyText.toDoubleOrNull() ?: 0.0
+        val qty = qtyText.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
         updateItemAt(index) { it.copy(quantity = qty) }
     }
 
     fun updateItemRate(index: Int, rateText: String) {
-        val rate = rateText.toDoubleOrNull() ?: 0.0
+        val rate = rateText.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
         updateItemAt(index) { it.copy(rate = rate) }
     }
 
@@ -582,8 +586,68 @@ class CashmemoViewModel(
         searchQueryFlow.value = query
     }
 
+    fun updateSelectedHistoryDate(date: String) {
+        selectedHistoryDateFlow.value = date.trim()
+    }
+
     fun updateHistoryFilter(filter: MemoFilter) {
         historyFilterFlow.value = filter
+    }
+
+    fun createNewBillForCustomer(customer: CustomerProfile) {
+        val settings = _uiState.value.settings
+        val taxDefault = if (settings.enableTax && settings.defaultTaxPercentage > 0) {
+            formatEditableNumber(settings.defaultTaxPercentage)
+        } else ""
+        val prevDues = if (customer.outstandingBalance > 0.009) {
+            formatEditableNumber(customer.outstandingBalance)
+        } else ""
+        _uiState.update {
+            it.copy(
+                activeDestination = AppDestination.EDITOR,
+                editor = EditorUiState(
+                    memoNumber = settings.nextMemoNumber.toString(),
+                    date = CashMemo.todayFormatted(),
+                    customerName = customer.name,
+                    customerMobile = customer.phoneNumber,
+                    customerAddress = customer.address,
+                    items = listOf(MemoItem(serialNo = 1)),
+                    taxPercentageText = taxDefault,
+                    previousDuesText = prevDues
+                )
+            )
+        }
+        viewModelScope.launch {
+            val dueMsg = if (customer.outstandingBalance > 0.009) {
+                " with ₹${formatEditableNumber(customer.outstandingBalance)} carry-forward due"
+            } else ""
+            _events.emit(UiEvent.ShowMessage("New bill started for ${customer.name}$dueMsg"))
+        }
+    }
+
+    fun shareMemoAsJpeg(memo: CashMemo) {
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShareMemoImages(memo, _uiState.value.settings))
+        }
+    }
+
+    fun shareMemoAsPdf(memo: CashMemo) {
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShareMemoPdf(memo, _uiState.value.settings))
+        }
+    }
+
+    fun savePermanentUpiConfig(upiVpa: String, payeeName: String, defaultNote: String) {
+        val current = _uiState.value.settings
+        val updated = current.copy(
+            upiVpa = upiVpa.trim(),
+            shopNameEnglish = payeeName.trim().ifBlank { current.shopNameEnglish },
+            upiDefaultNote = defaultNote.trim()
+        )
+        viewModelScope.launch {
+            repository.saveSettings(updated)
+            _events.emit(UiEvent.ShowMessage("Saved permanent Store UPI QR settings"))
+        }
     }
 
     fun editMemo(memo: CashMemo) {
@@ -740,8 +804,14 @@ class CashmemoViewModel(
         }
     }
 
-    private fun filterMemos(memos: List<CashMemo>, query: String, filter: MemoFilter): List<CashMemo> {
+    private fun filterMemos(
+        memos: List<CashMemo>,
+        query: String,
+        selectedDate: String,
+        filter: MemoFilter
+    ): List<CashMemo> {
         val q = query.trim().lowercase()
+        val d = selectedDate.trim()
         return memos.filter { memo ->
             val matchesFilter = when (filter) {
                 MemoFilter.ALL -> true
@@ -749,6 +819,7 @@ class CashmemoViewModel(
                 MemoFilter.PAID -> !memo.hasPendingDue
             }
             if (!matchesFilter) return@filter false
+            if (d.isNotEmpty() && memo.date.trim() != d) return@filter false
             if (q.isEmpty()) return@filter true
 
             memo.memoNumber.lowercase().contains(q) ||
@@ -774,7 +845,7 @@ class CashmemoViewModel(
             discountType = discountType,
             taxPercentageText = if (taxPercentage > 0.0) formatEditableNumber(taxPercentage) else "",
             previousDuesText = if (previousDues > 0.0) formatEditableNumber(previousDues) else "",
-            paidAmountText = if (hasCustom && paidAmount > 0.0) formatEditableNumber(paidAmount) else "",
+            paidAmountText = if (hasCustom) formatEditableNumber(paidAmount) else "",
             hasCustomPayment = hasCustom,
             paymentMethod = paymentMethod,
             paymentStatusNote = paymentStatusNote,
@@ -786,7 +857,8 @@ class CashmemoViewModel(
     }
 
     private fun formatEditableNumber(value: Double): String {
-        return if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+        val clean = if (value.isFinite()) value else 0.0
+        return if (clean % 1.0 == 0.0) clean.toLong().toString() else clean.toString()
     }
 
     private data class QuadrupleResult(
@@ -796,6 +868,7 @@ class CashmemoViewModel(
         val rates: List<PlantRate>,
         val settings: BusinessSettings,
         val query: String,
+        val selectedDate: String,
         val filter: MemoFilter,
         val stats: DashboardStats
     )

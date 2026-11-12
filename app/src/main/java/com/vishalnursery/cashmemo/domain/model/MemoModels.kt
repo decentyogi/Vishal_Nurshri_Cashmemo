@@ -99,18 +99,19 @@ data class BusinessSettings(
     val shopNameHindi: String = "विशाल नर्सरी",
     val shopNameEnglish: String = "Vishal Nursery",
     val tagline: String = "हमारे यहाँ हर प्रकार के फूल, पेड़-पौधा जैसे-गुलाब, गुलदावदी, गेंदा, क्रोटन सब गमले में तैयार पौधा भी मिलता है।",
-    val phone: String = "7631873743",
-    val email: String = "vishalnursery.sasaram@gmail.com",
+    val phone: String = "",
+    val email: String = "",
     val addressLine1: String = "ग्राम-कोटा, माँ ताराचण्डी रोड (माँ सीताराम मंदिर)",
     val addressLine2: String = "पो०-सासाराम (रोहतास), बिहार - 821115",
-    val gstin: String = "NaN",
+    val gstin: String = "",
     val currencySymbol: String = "₹",
     val memoPrefix: String = "VN-",
     val nextMemoNumber: Int = 1001,
     val defaultTaxPercentage: Double = 0.0,
     val enableTax: Boolean = false,
     val taxType: String = "GST",
-    val upiVpa: String = "dangerousop@ybl",
+    val upiVpa: String = "",
+    val upiDefaultNote: String = "",
     val signerName: String = "VISHAL NURSERY",
     val termsNote: String = "Thanks For Visiting Vishal Nurshri !! Visit Again... Thanks",
     val serverBaseUrl: String = "",
@@ -204,21 +205,21 @@ data class MemoCalculationResult(
             paidAmount: Double,
             hasCustomPayment: Boolean
         ): MemoCalculationResult {
-            val subtotal = round2(items.sumOf { max(0.0, it.quantity * it.rate) })
-            val rawDiscount = max(0.0, discount)
+            val subtotal = round2(items.sumOf { max(0.0, it.quantity.finiteOrZero() * it.rate.finiteOrZero()) })
+            val rawDiscount = max(0.0, discount.finiteOrZero())
             val effectiveDiscount = when (discountType) {
                 DiscountType.PERCENT -> (subtotal * rawDiscount) / 100.0
                 DiscountType.AMOUNT -> rawDiscount
-            }.coerceIn(0.0, subtotal)
+            }.finiteOrZero().coerceIn(0.0, subtotal)
 
             val taxableBase = round2(max(0.0, subtotal - effectiveDiscount))
-            val cleanTaxRate = max(0.0, taxPercentage)
+            val cleanTaxRate = max(0.0, taxPercentage.finiteOrZero())
             val taxAmount = round2((taxableBase * cleanTaxRate) / 100.0)
             val grandTotal = round2(taxableBase + taxAmount)
-            val cleanPrevDues = max(0.0, previousDues)
+            val cleanPrevDues = max(0.0, previousDues.finiteOrZero())
             val totalPayable = round2(grandTotal + cleanPrevDues)
 
-            val effectivePaid = if (hasCustomPayment) round2(max(0.0, paidAmount)) else totalPayable
+            val effectivePaid = if (hasCustomPayment) round2(max(0.0, paidAmount.finiteOrZero())) else totalPayable
             val balanceDue = if (hasCustomPayment) round2(max(0.0, totalPayable - effectivePaid)) else 0.0
             val changeToReturn = if (hasCustomPayment) round2(max(0.0, effectivePaid - totalPayable)) else 0.0
 
@@ -246,4 +247,6 @@ data class DashboardStats(
     val totalPendingDues: Double = 0.0
 )
 
-fun round2(value: Double): Double = (value * 100.0).roundToInt() / 100.0
+fun Double.finiteOrZero(): Double = if (isFinite()) this else 0.0
+
+fun round2(value: Double): Double = if (value.isFinite()) (value * 100.0).roundToInt() / 100.0 else 0.0

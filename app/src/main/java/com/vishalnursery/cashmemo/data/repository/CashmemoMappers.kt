@@ -255,7 +255,7 @@ fun BusinessSettings.toDto(): SettingsDto = SettingsDto(
     email = email,
     addressLine1 = addressLine1,
     addressLine2 = addressLine2,
-    gstin = gstin.ifBlank { "NaN" },
+    gstin = gstin.trim().takeUnless { it.equals("NaN", ignoreCase = true) } ?: "",
     currencySymbol = currencySymbol,
     memoPrefix = memoPrefix,
     nextMemoNumber = nextMemoNumber,
@@ -263,6 +263,7 @@ fun BusinessSettings.toDto(): SettingsDto = SettingsDto(
     enableTax = enableTax,
     taxType = taxType,
     upiVpa = upiVpa,
+    upiDefaultNote = upiDefaultNote,
     signerName = signerName,
     termsNote = termsNote
 )
@@ -275,7 +276,7 @@ fun SettingsDto.mergeInto(current: BusinessSettings): BusinessSettings = current
     email = email.ifBlank { current.email },
     addressLine1 = addressLine1.ifBlank { current.addressLine1 },
     addressLine2 = addressLine2.ifBlank { current.addressLine2 },
-    gstin = gstin.ifBlank { "NaN" },
+    gstin = gstin.trim().takeIf { it.isNotBlank() && !it.equals("NaN", ignoreCase = true) } ?: current.gstin,
     currencySymbol = currencySymbol.ifBlank { "₹" },
     memoPrefix = memoPrefix.ifBlank { current.memoPrefix },
     nextMemoNumber = maxOf(current.nextMemoNumber, nextMemoNumber),
@@ -283,6 +284,7 @@ fun SettingsDto.mergeInto(current: BusinessSettings): BusinessSettings = current
     enableTax = enableTax,
     taxType = taxType.ifBlank { "GST" },
     upiVpa = upiVpa.ifBlank { current.upiVpa },
+    upiDefaultNote = upiDefaultNote.ifBlank { current.upiDefaultNote },
     signerName = signerName.ifBlank { current.signerName },
     termsNote = termsNote.ifBlank { current.termsNote }
 )

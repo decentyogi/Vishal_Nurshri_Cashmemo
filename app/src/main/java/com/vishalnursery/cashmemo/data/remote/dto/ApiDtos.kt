@@ -10,14 +10,15 @@ data class SettingsDto(
     @SerializedName("email") val email: String = "",
     @SerializedName("addressLine1") val addressLine1: String = "",
     @SerializedName("addressLine2") val addressLine2: String = "",
-    @SerializedName("gstin") val gstin: String = "NaN",
+    @SerializedName("gstin") val gstin: String = "",
     @SerializedName("currencySymbol") val currencySymbol: String = "₹",
     @SerializedName("memoPrefix") val memoPrefix: String = "VN-",
     @SerializedName("nextMemoNumber") val nextMemoNumber: Int = 1001,
     @SerializedName("defaultTaxPercentage") val defaultTaxPercentage: Double = 0.0,
     @SerializedName("enableTax") val enableTax: Boolean = false,
     @SerializedName("taxType") val taxType: String = "GST",
-    @SerializedName("upiVpa") val upiVpa: String = "dangerousop@ybl",
+    @SerializedName("upiVpa") val upiVpa: String = "",
+    @SerializedName("upiDefaultNote") val upiDefaultNote: String = "",
     @SerializedName("signerName") val signerName: String = "VISHAL NURSERY",
     @SerializedName("termsNote") val termsNote: String = "Thanks For Visiting Vishal Nurshri !! Visit Again... Thanks"
 )

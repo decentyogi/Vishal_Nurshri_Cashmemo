@@ -3,6 +3,11 @@ package com.vishalnursery.cashmemo.ui.components
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
@@ -13,27 +18,58 @@ import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.print.pdf.PrintedPdfDocument
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
@@ -44,71 +80,405 @@ import java.io.FileOutputStream
 
 @Composable
 fun UpiQrDialog(
-    amount: Double,
+    initialAmount: Double,
     settings: BusinessSettings,
+    billLabel: String = "",
+    initialTab: Int = 0,
+    onSavePermanentQr: (upiVpa: String, payeeName: String, defaultNote: String) -> Unit = { _, _, _ -> },
     onDismiss: () -> Unit
 ) {
-    val upiUri = remember(amount, settings.upiVpa, settings.shopNameEnglish) {
+    val context = LocalContext.current
+    var activeTab by remember { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
+    var showFullScreen by remember { mutableStateOf(false) }
+
+    // Permanent Store QR state
+    var storeVpa by remember(settings.upiVpa) { mutableStateOf(settings.upiVpa) }
+    var storePayeeName by remember(settings.shopNameEnglish) { mutableStateOf(settings.shopNameEnglish) }
+    var storeNote by remember(settings.upiDefaultNote) { mutableStateOf(settings.upiDefaultNote) }
+    var storeSavedFeedback by remember { mutableStateOf(false) }
+
+    // Custom One-Time QR state
+    var customAmountText by remember(initialAmount) {
+        mutableStateOf(
+            if (initialAmount.isFinite() && initialAmount > 0.009) {
+                if (initialAmount % 1.0 == 0.0) initialAmount.toLong().toString()
+                else String.format(java.util.Locale.US, "%.2f", initialAmount)
+            } else {
+                ""
+            }
+        )
+    }
+    var customVpa by remember(settings.upiVpa) { mutableStateOf(settings.upiVpa) }
+    var customPayeeName by remember(settings.shopNameEnglish) { mutableStateOf(settings.shopNameEnglish) }
+    var customNote by remember(billLabel, settings.upiDefaultNote) {
+        mutableStateOf(settings.upiDefaultNote.ifBlank { billLabel })
+    }
+
+    val activeVpa = if (activeTab == 0) storeVpa else customVpa
+    val activePayee = if (activeTab == 0) storePayeeName else customPayeeName
+    val activeNote = if (activeTab == 0) {
+        storeNote.ifBlank { billLabel }
+    } else {
+        customNote
+    }
+    val activeAmount = if (activeTab == 0) {
+        if (initialAmount.isFinite() && initialAmount > 0.009) initialAmount else 0.0
+    } else {
+        customAmountText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
+    }
+
+    val hasValidVpa = IndianCurrencyFormatter.isValidUpiVpa(activeVpa)
+    val upiUri = remember(activeVpa, activePayee, activeAmount, activeNote) {
         IndianCurrencyFormatter.buildUpiUri(
-            upiVpa = settings.upiVpa,
-            payeeName = settings.shopNameEnglish,
-            amount = amount
+            upiVpa = activeVpa,
+            payeeName = activePayee,
+            amount = activeAmount,
+            note = activeNote
         )
     }
     val qrBitmap = remember(upiUri) {
-        QrCodeGenerator.generateBitmap(upiUri, sizePx = 560)
+        if (upiUri.isNotEmpty()) QrCodeGenerator.generateBitmap(upiUri, sizePx = 640) else null
+    }
+
+    if (showFullScreen && qrBitmap != null) {
+        Dialog(
+            onDismissRequest = { showFullScreen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = Color.White
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (activeTab == 0) "Store Payment QR" else "Custom UPI QR",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        IconButton(onClick = { showFullScreen = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Exit Full Screen")
+                        }
+                    }
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = activePayee.ifBlank { "UPI Payment" },
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (activeAmount > 0.009) {
+                            Text(
+                                text = IndianCurrencyFormatter.formatInr(activeAmount, settings.currencySymbol),
+                                style = MaterialTheme.typography.displaySmall,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        } else {
+                            Text(
+                                text = "Scan & Enter Any Amount",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White,
+                            shadowElevation = 4.dp
+                        ) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "Full Screen UPI QR",
+                                modifier = Modifier
+                                    .padding(16.dp)
+                                    .size(300.dp)
+                            )
+                        }
+                        Text(
+                            text = activeVpa.trim(),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (activeNote.isNotBlank()) {
+                            Text(
+                                text = activeNote.trim(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                        Text(
+                            text = "Accepted by GPay • PhonePe • Paytm • BHIM",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showFullScreen = false },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Back")
+                        }
+                        Button(
+                            onClick = {
+                                ShareExportHelper.shareUpiQrCard(
+                                    context = context,
+                                    upiUri = upiUri,
+                                    payeeName = activePayee,
+                                    upiVpa = activeVpa,
+                                    amount = activeAmount,
+                                    note = activeNote,
+                                    currencySymbol = settings.currencySymbol
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Share QR")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "Scan & Pay via UPI",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = IndianCurrencyFormatter.formatInr(amount, settings.currencySymbol),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Default.QrCode2, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = "UPI QR Manager",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (activeAmount > 0.009) {
+                        Text(
+                            text = IndianCurrencyFormatter.formatInr(activeAmount, settings.currencySymbol),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = activeTab == 0,
+                        onClick = { activeTab = 0 },
+                        label = { Text("Store Permanent QR") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = activeTab == 1,
+                        onClick = { activeTab = 1 },
+                        label = { Text("Custom Amount QR") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = Color.White,
-                    shadowElevation = 2.dp
+                    shadowElevation = 2.dp,
+                    modifier = Modifier.clickable(enabled = qrBitmap != null) { showFullScreen = true }
                 ) {
                     if (qrBitmap != null) {
-                        Image(
-                            bitmap = qrBitmap.asImageBitmap(),
-                            contentDescription = "UPI QR Code",
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "UPI QR Code",
+                                modifier = Modifier.size(196.dp)
+                            )
+                            Text(
+                                text = activeVpa.trim(),
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Tap QR for full-screen counter display",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Column(
                             modifier = Modifier
-                                .padding(12.dp)
-                                .size(220.dp)
-                        )
+                                .fillMaxWidth()
+                                .padding(18.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Enter a valid UPI ID (e.g. name@bank) below to generate a scannable QR.",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
-                Text(
-                    text = settings.upiVpa,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "GPay / PhonePe / Paytm / BHIM",
-                    style = MaterialTheme.typography.bodySmall,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+
+                if (qrBitmap != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showFullScreen = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Fullscreen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Full Screen", maxLines = 1)
+                        }
+                        Button(
+                            onClick = {
+                                ShareExportHelper.shareUpiQrCard(
+                                    context = context,
+                                    upiUri = upiUri,
+                                    payeeName = activePayee,
+                                    upiVpa = activeVpa,
+                                    amount = activeAmount,
+                                    note = activeNote,
+                                    currencySymbol = settings.currencySymbol
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Save / Share", maxLines = 1)
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+
+                if (activeTab == 0) {
+                    OutlinedTextField(
+                        value = storeVpa,
+                        onValueChange = {
+                            storeVpa = it
+                            storeSavedFeedback = false
+                        },
+                        label = { Text("Store UPI ID (e.g. name@ybl)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = storePayeeName,
+                        onValueChange = {
+                            storePayeeName = it
+                            storeSavedFeedback = false
+                        },
+                        label = { Text("Payee / Nursery Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = storeNote,
+                        onValueChange = {
+                            storeNote = it
+                            storeSavedFeedback = false
+                        },
+                        label = { Text("Default Payment Note (Optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = {
+                            onSavePermanentQr(storeVpa.trim(), storePayeeName.trim(), storeNote.trim())
+                            storeSavedFeedback = true
+                        },
+                        enabled = hasValidVpa || storeVpa.isBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (storeSavedFeedback) "Permanent Store QR Saved ✓" else "Save Permanent Store QR")
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = customAmountText,
+                        onValueChange = { customAmountText = it },
+                        label = { Text("Custom Amount (₹)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = customVpa,
+                        onValueChange = { customVpa = it },
+                        label = { Text("UPI ID") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = customPayeeName,
+                        onValueChange = { customPayeeName = it },
+                        label = { Text("Payee Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = customNote,
+                        onValueChange = { customNote = it },
+                        label = { Text("Transaction Note (Optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         },
         confirmButton = {
@@ -211,6 +581,107 @@ object ShareExportHelper {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Share $subject"))
+    }
+
+    fun shareUpiQrCard(
+        context: Context,
+        upiUri: String,
+        payeeName: String,
+        upiVpa: String,
+        amount: Double,
+        note: String,
+        currencySymbol: String
+    ) {
+        if (upiUri.isBlank()) return
+        val qrBitmap = QrCodeGenerator.generateBitmap(upiUri, sizePx = 760) ?: return
+        val cardW = 1080
+        val cardH = 1360
+        val cardBitmap = Bitmap.createBitmap(cardW, cardH, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(cardBitmap)
+            canvas.drawColor(android.graphics.Color.WHITE)
+
+            val maroon = android.graphics.Color.parseColor("#7A1120")
+            val darkInk = android.graphics.Color.parseColor("#1F1A1C")
+            val mutedInk = android.graphics.Color.parseColor("#5A4E52")
+            val green = android.graphics.Color.parseColor("#1B6B3A")
+
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = maroon
+                style = Paint.Style.STROKE
+                strokeWidth = 10f
+            }
+            canvas.drawRoundRect(RectF(28f, 28f, cardW - 28f, cardH - 28f), 32f, 32f, borderPaint)
+
+            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = maroon
+                textSize = 54f
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            }
+            canvas.drawText(payeeName.ifBlank { "UPI Payment" }, cardW / 2f, 130f, titlePaint)
+
+            if (amount > 0.009) {
+                val amtPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = green
+                    textSize = 62f
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                }
+                canvas.drawText(
+                    IndianCurrencyFormatter.formatInr(amount, currencySymbol),
+                    cardW / 2f,
+                    220f,
+                    amtPaint
+                )
+            } else {
+                val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = mutedInk
+                    textSize = 36f
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText("Scan & Pay Any Amount", cardW / 2f, 212f, subPaint)
+            }
+
+            val qrRect = RectF(180f, 270f, 900f, 990f)
+            canvas.drawBitmap(qrBitmap, null, qrRect, Paint(Paint.FILTER_BITMAP_FLAG))
+
+            val vpaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = darkInk
+                textSize = 40f
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            }
+            canvas.drawText("UPI: ${upiVpa.trim()}", cardW / 2f, 1080f, vpaPaint)
+
+            if (note.isNotBlank()) {
+                val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = mutedInk
+                    textSize = 32f
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(note.trim(), cardW / 2f, 1146f, notePaint)
+            }
+
+            val footPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = mutedInk
+                textSize = 30f
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText("GPay • PhonePe • Paytm • BHIM", cardW / 2f, 1255f, footPaint)
+
+            val exportDir = File(context.filesDir, "exports").apply { mkdirs() }
+            val safeVpa = upiVpa.replace(Regex("[^A-Za-z0-9]"), "_").ifBlank { "upi" }
+            val file = File(exportDir, "UPI_QR_${safeVpa}.jpg")
+            FileOutputStream(file).use { stream ->
+                cardBitmap.compress(Bitmap.CompressFormat.JPEG, 94, stream)
+                stream.flush()
+            }
+            shareImageFiles(context, listOf(file), "UPI Payment QR - $upiVpa")
+        } finally {
+            qrBitmap.recycle()
+            cardBitmap.recycle()
+        }
     }
 }
 

@@ -213,12 +213,17 @@ object BillDocumentRenderer {
         val centerX = LOGICAL_W / 2f
 
         // --- Header Block (repeats identically on every page) ---
-        val maroonPaint = textPaint(30f, CLASSIC_MAROON, bold = true)
-        val phoneText = "Mob. ${settings.phone.ifBlank { "7631873743" }}"
-
-        // Top-left rosette emblem, centered Mob., top-right sprout emblem
+        // Top-left rosette emblem, centered Mob. (only if configured), top-right sprout emblem
         drawRosetteEmblem(canvas, cLeft + 26f, 114f, 22f, CLASSIC_MAROON)
-        drawCenteredText(canvas, phoneText, centerX, 122f, textPaint(29f, CLASSIC_MAROON, bold = true))
+        if (settings.phone.isNotBlank()) {
+            drawCenteredText(
+                canvas,
+                "Mob. ${settings.phone.trim()}",
+                centerX,
+                122f,
+                textPaint(29f, CLASSIC_MAROON, bold = true)
+            )
+        }
         drawSproutEmblem(canvas, cRight - 30f, 134f, 44f, CLASSIC_MAROON)
 
         // Shop Hindi Title flanked by crisp vector ✿ rosettes
@@ -263,22 +268,32 @@ object BillDocumentRenderer {
         }
         canvas.drawLine(cLeft, 422f, cRight, 422f, headerLinePaint)
 
-        // --- Memo & Customer Info Block (repeats on every page) ---
-        val labelPaint = textPaint(28f, CLASSIC_MAROON, bold = true)
-        val valuePaint = textPaint(28f, INK_DARK, bold = true)
+        // --- Memo & Customer Info Block (Center-aligned on every page) ---
+        val labelPaint = textPaint(27f, CLASSIC_MAROON, bold = true)
+        val valuePaint = textPaint(27f, INK_DARK, bold = true)
         val subtleRulePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = CLASSIC_ROW_DIVIDER
             strokeWidth = 1.6f
         }
 
-        val leftColRight = 1130f
-        val rightColLeft = 1165f
+        // Row 1 (Centered): नं० [ MemoNo (Page X/Y) ]   दिनांक: Date
+        val noLabel = "नं० "
+        val noLabelW = labelPaint.measureText(noLabel)
+        val memoBoxText = "${memo.memoNumber} (Page ${pageIndex + 1}/$totalPages)"
+        val memoBoxTextPaint = textPaint(26f, CLASSIC_DARK_MAROON, bold = true)
+        val memoBoxW = maxOf(310f, memoBoxTextPaint.measureText(memoBoxText) + 52f)
+        val dateLabel = "दिनांक: "
+        val dateText = memo.date.trim()
+        val dateCombinedW = labelPaint.measureText(dateLabel) +
+            if (dateText.isNotEmpty()) valuePaint.measureText(dateText) else 150f
+        val row1Gap = 44f
+        val row1TotalW = noLabelW + memoBoxW + row1Gap + dateCombinedW
+        val row1StartX = (centerX - row1TotalW / 2f).coerceAtLeast(cLeft)
 
-        // Memo No bordered rounded box: "नं०  [ 1001 (Page 1/2) ]"
-        canvas.drawText("नं०", cLeft, 476f, labelPaint)
-        val noBoxLeft = cLeft + 66f
-        val noBoxRight = cLeft + 498f
-        val noBoxRect = RectF(noBoxLeft, 438f, noBoxRight, 492f)
+        canvas.drawText(noLabel, row1StartX, 474f, labelPaint)
+        val noBoxLeft = row1StartX + noLabelW
+        val noBoxRight = noBoxLeft + memoBoxW
+        val noBoxRect = RectF(noBoxLeft, 438f, noBoxRight, 488f)
         val boxStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = CLASSIC_MAROON
             style = Paint.Style.STROKE
@@ -290,86 +305,64 @@ object BillDocumentRenderer {
         }
         canvas.drawRoundRect(noBoxRect, 10f, 10f, boxFill)
         canvas.drawRoundRect(noBoxRect, 10f, 10f, boxStroke)
+        drawCenteredText(canvas, memoBoxText, noBoxRect.centerX(), 473f, memoBoxTextPaint)
 
-        val memoBoxText = "${memo.memoNumber} (Page ${pageIndex + 1}/$totalPages)"
-        drawCenteredText(
-            canvas,
-            memoBoxText,
-            noBoxRect.centerX(),
-            475f,
-            textPaint(27f, CLASSIC_DARK_MAROON, bold = true)
+        val dateStartX = noBoxRight + row1Gap
+        val dateLabelW = labelPaint.measureText(dateLabel)
+        canvas.drawText(dateLabel, dateStartX, 474f, labelPaint)
+        if (dateText.isNotEmpty()) {
+            canvas.drawText(dateText, dateStartX + dateLabelW, 474f, valuePaint)
+        } else {
+            canvas.drawLine(dateStartX + dateLabelW, 480f, dateStartX + dateLabelW + 150f, 480f, subtleRulePaint)
+        }
+
+        // Row 2 (Centered): नामः <Customer Name>
+        drawCenteredLabelValueRow(
+            canvas = canvas,
+            centerX = centerX,
+            maxRowWidth = contentWidth - 40f,
+            baselineY = 530f,
+            label = "नामः ",
+            value = memo.customerName.trim(),
+            labelPaint = labelPaint,
+            valuePaint = valuePaint,
+            rulePaint = subtleRulePaint
         )
 
-        // Left Column: नामः & पता
-        val nameLabel = "नामः "
-        val nameLabelW = labelPaint.measureText(nameLabel)
-        canvas.drawText(nameLabel, cLeft, 536f, labelPaint)
-        if (memo.customerName.isNotBlank()) {
-            drawSingleLineEllipsized(
-                canvas,
-                memo.customerName.trim(),
-                cLeft + nameLabelW + 6f,
-                536f,
-                leftColRight - (cLeft + nameLabelW + 16f),
-                valuePaint
-            )
-        }
-        canvas.drawLine(cLeft + nameLabelW, 543f, leftColRight, 543f, subtleRulePaint)
+        // Row 3 (Centered): मो०: <Mobile No>
+        drawCenteredLabelValueRow(
+            canvas = canvas,
+            centerX = centerX,
+            maxRowWidth = contentWidth - 40f,
+            baselineY = 578f,
+            label = "मो०: ",
+            value = memo.customerMobile.trim(),
+            labelPaint = labelPaint,
+            valuePaint = valuePaint,
+            rulePaint = subtleRulePaint
+        )
 
-        val addrLabel = "पता: "
-        val addrLabelW = labelPaint.measureText(addrLabel)
-        canvas.drawText(addrLabel, cLeft, 594f, labelPaint)
-        if (memo.customerAddress.isNotBlank()) {
-            drawSingleLineEllipsized(
-                canvas,
-                memo.customerAddress.trim(),
-                cLeft + addrLabelW + 6f,
-                594f,
-                leftColRight - (cLeft + addrLabelW + 16f),
-                valuePaint
-            )
-        }
-        canvas.drawLine(cLeft + addrLabelW, 601f, leftColRight, 601f, subtleRulePaint)
-
-        // Right Column: दिनांक & मो०
-        val dateLabel = "दिनांक: "
-        val dateLabelW = labelPaint.measureText(dateLabel)
-        canvas.drawText(dateLabel, rightColLeft, 476f, labelPaint)
-        if (memo.date.isNotBlank()) {
-            drawSingleLineEllipsized(
-                canvas,
-                memo.date.trim(),
-                rightColLeft + dateLabelW + 4f,
-                476f,
-                cRight - (rightColLeft + dateLabelW + 8f),
-                valuePaint
-            )
-        }
-        canvas.drawLine(rightColLeft + dateLabelW, 483f, cRight, 483f, subtleRulePaint)
-
-        val mobLabel = "मो०: "
-        val mobLabelW = labelPaint.measureText(mobLabel)
-        canvas.drawText(mobLabel, rightColLeft, 536f, labelPaint)
-        if (memo.customerMobile.isNotBlank()) {
-            drawSingleLineEllipsized(
-                canvas,
-                memo.customerMobile.trim(),
-                rightColLeft + mobLabelW + 4f,
-                536f,
-                cRight - (rightColLeft + mobLabelW + 8f),
-                valuePaint
-            )
-        }
-        canvas.drawLine(rightColLeft + mobLabelW, 543f, cRight, 543f, subtleRulePaint)
+        // Row 4 (Centered): पता: <Address>
+        drawCenteredLabelValueRow(
+            canvas = canvas,
+            centerX = centerX,
+            maxRowWidth = contentWidth - 40f,
+            baselineY = 626f,
+            label = "पता: ",
+            value = memo.customerAddress.trim(),
+            labelPaint = labelPaint,
+            valuePaint = valuePaint,
+            rulePaint = subtleRulePaint
+        )
 
         // --- Items Table (Strict 15 Rows Per Page) ---
-        val tableTop = 626f
+        val tableTop = 652f
         val thHeight = 68f
-        val rowsTop = tableTop + thHeight // 694f
-        val rowHeight = 78f
-        val rowsBottom = rowsTop + CLASSIC_ITEMS_PER_PAGE * rowHeight // 1864f
-        val summaryHeight = 76f
-        val tableBottom = rowsBottom + summaryHeight // 1940f
+        val rowsTop = tableTop + thHeight // 720f
+        val rowHeight = 76f
+        val rowsBottom = rowsTop + CLASSIC_ITEMS_PER_PAGE * rowHeight // 1860f
+        val summaryHeight = 74f
+        val tableBottom = rowsBottom + summaryHeight // 1934f
 
         // Column X boundaries (width total = 1616f)
         val col0 = cLeft            // 92f
@@ -560,15 +553,63 @@ object BillDocumentRenderer {
                 alignment = Layout.Alignment.ALIGN_NORMAL,
                 maxLines = 2
             )
+            // UPI QR block on final page (below Paid / Balance Due lines, opposite Stamp box)
+            if (IndianCurrencyFormatter.isValidUpiVpa(settings.upiVpa)) {
+                val qrAmount = IndianCurrencyFormatter.resolveBillQrAmount(memo.paidAmount, memo.totalPayable)
+                val upiUri = IndianCurrencyFormatter.buildUpiUri(
+                    upiVpa = settings.upiVpa,
+                    payeeName = settings.shopNameEnglish,
+                    amount = qrAmount,
+                    note = settings.upiDefaultNote.ifBlank { "Bill ${memo.memoNumber}" }
+                )
+                val qrBitmap = if (upiUri.isNotEmpty()) QrCodeGenerator.generateBitmap(upiUri, sizePx = 280) else null
+                if (qrBitmap != null) {
+                    val qrTop = 2196f
+                    val qrRect = RectF(cLeft, qrTop, cLeft + 190f, qrTop + 190f)
+                    val qrBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = CLASSIC_MAROON
+                        style = Paint.Style.STROKE
+                        strokeWidth = 2f
+                    }
+                    try {
+                        canvas.drawBitmap(qrBitmap, null, qrRect, Paint(Paint.FILTER_BITMAP_FLAG))
+                        canvas.drawRect(qrRect, qrBorderPaint)
+                    } finally {
+                        qrBitmap.recycle()
+                    }
+                    val qrTextMaxW = (cRight - 480f) - (cLeft + 212f)
+                    drawSingleLineEllipsized(
+                        canvas,
+                        "UPI: ${settings.upiVpa.trim()}",
+                        cLeft + 212f,
+                        qrTop + 70f,
+                        qrTextMaxW,
+                        textPaint(23f, INK_DARK, bold = true)
+                    )
+                    canvas.drawText("Scan to Pay", cLeft + 212f, qrTop + 108f, textPaint(22f, INK_MUTED, bold = false))
+                    if (qrAmount > 0.009) {
+                        canvas.drawText(
+                            "Amount: ${IndianCurrencyFormatter.formatInr(qrAmount, settings.currencySymbol)}",
+                            cLeft + 212f,
+                            qrTop + 144f,
+                            textPaint(22f, GREEN_STAMP, bold = true)
+                        )
+                    }
+                }
+            }
         }
 
         // --- Bottom Footer (Must appear on EVERY page) ---
-        drawCenteredTextOrLeft(
-            canvas,
-            "भूल-चूक लेनी-देनी (E. & O.E.)",
-            cLeft,
-            2432f,
-            textPaint(26f, CLASSIC_MAROON, bold = true)
+        val footerGreeting = settings.termsNote.ifBlank {
+            "Thanks For Visiting Vishal Nurshri !! Visit Again... Thanks"
+        }
+        drawSingleLineEllipsized(
+            canvas = canvas,
+            text = footerGreeting,
+            x = cLeft,
+            y = 2432f,
+            maxWidth = (cRight - 480f) - cLeft,
+            paint = textPaint(23f, CLASSIC_MAROON, bold = true)
         )
 
         // Boxed Digital Stamp (Bottom-Right)
@@ -632,9 +673,16 @@ object BillDocumentRenderer {
         val centerX = LOGICAL_W / 2f
 
         // Header
+        val headerMeta = buildString {
+            append("CASH MEMO")
+            if (IndianCurrencyFormatter.isValidGstin(settings.gstin)) {
+                append(" | GSTIN: ").append(settings.gstin.trim())
+            }
+            append(" | Page ").append(pageIndex + 1).append('/').append(totalPages)
+        }
         drawCenteredText(
             canvas,
-            "CASH MEMO | GSTIN: ${settings.gstin} | Page ${pageIndex + 1}/$totalPages",
+            headerMeta,
             centerX,
             122f,
             textPaint(25f, Color.parseColor("#4A1019"), bold = true)
@@ -656,9 +704,20 @@ object BillDocumentRenderer {
             alignment = Layout.Alignment.ALIGN_CENTER,
             maxLines = 2
         )
+        val contactLine = buildString {
+            append(settings.addressLine1)
+            if (settings.addressLine2.isNotBlank()) {
+                if (isNotEmpty()) append(", ")
+                append(settings.addressLine2)
+            }
+            if (settings.phone.isNotBlank()) {
+                if (isNotEmpty()) append(" | ")
+                append("Mob: ").append(settings.phone.trim())
+            }
+        }
         drawCenteredText(
             canvas,
-            "${settings.addressLine1}, ${settings.addressLine2} | Mob: ${settings.phone}",
+            contactLine,
             centerX,
             298f,
             textPaint(24f, Color.parseColor("#4A1019"), bold = true)
@@ -779,22 +838,37 @@ object BillDocumentRenderer {
                 maxLines = 3
             )
 
-            // UPI QR block
-            val upiUri = IndianCurrencyFormatter.buildUpiUri(
-                upiVpa = settings.upiVpa,
-                payeeName = settings.shopNameEnglish,
-                amount = memo.totalPayable
-            )
-            val qrBitmap = QrCodeGenerator.generateBitmap(upiUri, sizePx = 280)
-            if (qrBitmap != null) {
-                val qrTop = footerTop + 100f
-                val qrRect = RectF(cLeft, qrTop, cLeft + 220f, qrTop + 220f)
-                canvas.drawBitmap(qrBitmap, null, qrRect, Paint(Paint.FILTER_BITMAP_FLAG))
-                canvas.drawRect(qrRect, innerStroke)
-                qrBitmap.recycle()
+            // UPI QR block (only if valid UPI VPA configured; encodes Paid Amount if > 0 else Total Payable)
+            if (IndianCurrencyFormatter.isValidUpiVpa(settings.upiVpa)) {
+                val qrAmount = IndianCurrencyFormatter.resolveBillQrAmount(memo.paidAmount, memo.totalPayable)
+                val upiUri = IndianCurrencyFormatter.buildUpiUri(
+                    upiVpa = settings.upiVpa,
+                    payeeName = settings.shopNameEnglish,
+                    amount = qrAmount,
+                    note = settings.upiDefaultNote.ifBlank { "Bill ${memo.memoNumber}" }
+                )
+                val qrBitmap = if (upiUri.isNotEmpty()) QrCodeGenerator.generateBitmap(upiUri, sizePx = 280) else null
+                if (qrBitmap != null) {
+                    val qrTop = footerTop + 100f
+                    val qrRect = RectF(cLeft, qrTop, cLeft + 220f, qrTop + 220f)
+                    try {
+                        canvas.drawBitmap(qrBitmap, null, qrRect, Paint(Paint.FILTER_BITMAP_FLAG))
+                        canvas.drawRect(qrRect, innerStroke)
+                    } finally {
+                        qrBitmap.recycle()
+                    }
 
-                canvas.drawText("UPI: ${settings.upiVpa}", cLeft + 240f, qrTop + 95f, textPaint(24f, INK_DARK, bold = true))
-                canvas.drawText("Scan to Pay", cLeft + 240f, qrTop + 132f, textPaint(23f, INK_MUTED, bold = false))
+                    canvas.drawText("UPI: ${settings.upiVpa.trim()}", cLeft + 240f, qrTop + 88f, textPaint(24f, INK_DARK, bold = true))
+                    canvas.drawText("Scan to Pay", cLeft + 240f, qrTop + 126f, textPaint(23f, INK_MUTED, bold = false))
+                    if (qrAmount > 0.009) {
+                        canvas.drawText(
+                            "Amount: ${IndianCurrencyFormatter.formatInr(qrAmount, settings.currencySymbol)}",
+                            cLeft + 240f,
+                            qrTop + 162f,
+                            textPaint(22f, GREEN_STAMP, bold = true)
+                        )
+                    }
+                }
             }
 
             // Right Totals Column
@@ -852,7 +926,9 @@ object BillDocumentRenderer {
         // Terms & Signatory
         drawStaticText(
             canvas = canvas,
-            text = settings.termsNote,
+            text = settings.termsNote.ifBlank {
+                "Thanks For Visiting Vishal Nurshri !! Visit Again... Thanks"
+            },
             x = cLeft,
             y = 2388f,
             width = 1050,
@@ -989,6 +1065,35 @@ object BillDocumentRenderer {
     ) {
         canvas.drawText(label, leftX, baselineY, paint)
         drawRightText(canvas, value, rightX, baselineY, paint)
+    }
+
+    private fun drawCenteredLabelValueRow(
+        canvas: Canvas,
+        centerX: Float,
+        maxRowWidth: Float,
+        baselineY: Float,
+        label: String,
+        value: String,
+        labelPaint: TextPaint,
+        valuePaint: TextPaint,
+        rulePaint: Paint
+    ) {
+        val labelW = labelPaint.measureText(label)
+        val availValW = (maxRowWidth - labelW).coerceAtLeast(80f)
+        if (value.isNotEmpty()) {
+            val clippedVal = TextUtils.ellipsize(value, valuePaint, availValW, TextUtils.TruncateAt.END).toString()
+            val valW = valuePaint.measureText(clippedVal)
+            val totalW = labelW + valW
+            val startX = centerX - totalW / 2f
+            canvas.drawText(label, startX, baselineY, labelPaint)
+            canvas.drawText(clippedVal, startX + labelW, baselineY, valuePaint)
+        } else {
+            val blankW = 240f.coerceAtMost(availValW)
+            val totalW = labelW + blankW
+            val startX = centerX - totalW / 2f
+            canvas.drawText(label, startX, baselineY, labelPaint)
+            canvas.drawLine(startX + labelW, baselineY + 6f, startX + totalW, baselineY + 6f, rulePaint)
+        }
     }
 
     private fun drawSingleLineEllipsized(

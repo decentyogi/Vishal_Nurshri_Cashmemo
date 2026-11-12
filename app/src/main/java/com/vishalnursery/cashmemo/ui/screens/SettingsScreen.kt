@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Upload
@@ -59,6 +60,7 @@ import com.vishalnursery.cashmemo.BuildConfig
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
+import com.vishalnursery.cashmemo.ui.components.UpiQrDialog
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 
 @Composable
@@ -68,6 +70,7 @@ fun SettingsScreen(
     availableFlashModels: List<String>,
     isDetectingModels: Boolean,
     onSaveSettings: (BusinessSettings) -> Unit,
+    onSavePermanentQr: (String, String, String) -> Unit,
     onDetectFlashModels: (String?) -> Unit,
     onSyncNow: (String?) -> Unit,
     onExportJsonBackup: () -> Unit,
@@ -80,6 +83,25 @@ fun SettingsScreen(
         mutableStateOf(settings.nextMemoNumber.toString())
     }
     var showApiKey by remember { mutableStateOf(false) }
+    var showQrManager by remember { mutableStateOf(false) }
+
+    if (showQrManager) {
+        UpiQrDialog(
+            initialAmount = 0.0,
+            settings = draft,
+            billLabel = "",
+            initialTab = 0,
+            onSavePermanentQr = { vpa, payee, note ->
+                draft = draft.copy(
+                    upiVpa = vpa,
+                    shopNameEnglish = payee.ifBlank { draft.shopNameEnglish },
+                    upiDefaultNote = note
+                )
+                onSavePermanentQr(vpa, payee, note)
+            },
+            onDismiss = { showQrManager = false }
+        )
+    }
 
     val importBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -139,7 +161,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = draft.gstin,
                         onValueChange = { draft = draft.copy(gstin = it) },
-                        label = { Text("GSTIN") },
+                        label = { Text("GSTIN (Optional)") },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -148,7 +170,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = draft.upiVpa,
                         onValueChange = { draft = draft.copy(upiVpa = it) },
-                        label = { Text("UPI VPA") },
+                        label = { Text("Store UPI ID") },
                         singleLine = true,
                         modifier = Modifier.weight(1.4f)
                     )
@@ -165,11 +187,26 @@ fun SettingsScreen(
                     )
                 }
                 OutlinedTextField(
-                    value = draft.termsNote,
-                    onValueChange = { draft = draft.copy(termsNote = it) },
-                    label = { Text("Terms & Footer Note") },
+                    value = draft.upiDefaultNote,
+                    onValueChange = { draft = draft.copy(upiDefaultNote = it) },
+                    label = { Text("Default UPI Payment Note (Optional)") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                OutlinedTextField(
+                    value = draft.termsNote,
+                    onValueChange = { draft = draft.copy(termsNote = it) },
+                    label = { Text("Bill Footer Greeting Message") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedButton(
+                    onClick = { showQrManager = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Open UPI QR Manager / Custom QR Generator")
+                }
 
                 Text(
                     text = "Default Bill Export / Print Layout",

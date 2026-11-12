@@ -61,25 +61,51 @@ object IndianCurrencyFormatter {
         return if (amount < 0) "Minus ${sb.toString().trim()}" else sb.toString().trim()
     }
 
+    fun isValidUpiVpa(upiVpa: String): Boolean {
+        val clean = upiVpa.trim()
+        return clean.isNotEmpty() && !clean.equals("NaN", ignoreCase = true) && clean.contains("@")
+    }
+
+    fun isValidGstin(gstin: String): Boolean {
+        val clean = gstin.trim()
+        return clean.isNotEmpty() &&
+            !clean.equals("NaN", ignoreCase = true) &&
+            !clean.equals("N/A", ignoreCase = true)
+    }
+
+    fun resolveBillQrAmount(paidAmount: Double, totalPayable: Double): Double {
+        val cleanPaid = if (paidAmount.isFinite()) paidAmount else 0.0
+        val cleanTotal = if (totalPayable.isFinite()) totalPayable else 0.0
+        return when {
+            cleanPaid > 0.009 -> cleanPaid
+            cleanTotal > 0.009 -> cleanTotal
+            else -> 0.0
+        }
+    }
+
     fun buildUpiUri(
         upiVpa: String,
         payeeName: String,
         amount: Double,
         note: String = "Plant Purchase"
     ): String {
-        val cleanVpa = upiVpa.trim().ifEmpty { "dangerousop@ybl" }
-        val encodedName = URLEncoder.encode(payeeName.trim().ifEmpty { "Vishal Nursery" }, "UTF-8")
-            .replace("+", "%20")
-        val encodedNote = URLEncoder.encode(note, "UTF-8").replace("+", "%20")
-        return if (amount > 0.0) {
-            val amtStr = if (amount % 1.0 == 0.0) {
-                amount.toLong().toString()
-            } else {
-                String.format(Locale.US, "%.2f", amount)
+        val cleanVpa = upiVpa.trim()
+        if (!isValidUpiVpa(cleanVpa)) return ""
+        val cleanName = payeeName.trim().ifEmpty { "Merchant" }
+        val encodedName = URLEncoder.encode(cleanName, "UTF-8").replace("+", "%20")
+        val cleanNote = note.trim()
+        val encodedNote = URLEncoder.encode(cleanNote, "UTF-8").replace("+", "%20")
+        val cleanAmount = if (amount.isFinite()) amount else 0.0
+        return buildString {
+            append("upi://pay?pa=").append(cleanVpa)
+            append("&pn=").append(encodedName)
+            if (cleanAmount > 0.009) {
+                append("&am=").append(String.format(Locale.US, "%.2f", cleanAmount))
             }
-            "upi://pay?pa=$cleanVpa&pn=$encodedName&am=$amtStr&cu=INR&tn=$encodedNote"
-        } else {
-            "upi://pay?pa=$cleanVpa&pn=$encodedName&cu=INR&tn=$encodedNote"
+            append("&cu=INR")
+            if (cleanNote.isNotEmpty()) {
+                append("&tn=").append(encodedNote)
+            }
         }
     }
 

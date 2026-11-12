@@ -34,6 +34,7 @@ class SettingsDataStore(private val context: Context) {
         val ENABLE_TAX = booleanPreferencesKey("enable_tax")
         val TAX_TYPE = stringPreferencesKey("tax_type")
         val UPI_VPA = stringPreferencesKey("upi_vpa")
+        val UPI_DEFAULT_NOTE = stringPreferencesKey("upi_default_note")
         val SIGNER_NAME = stringPreferencesKey("signer_name")
         val TERMS_NOTE = stringPreferencesKey("terms_note")
         val SERVER_BASE_URL = stringPreferencesKey("server_base_url")
@@ -55,14 +56,15 @@ class SettingsDataStore(private val context: Context) {
             email = prefs[Keys.EMAIL] ?: defaults.email,
             addressLine1 = prefs[Keys.ADDRESS_LINE1] ?: defaults.addressLine1,
             addressLine2 = prefs[Keys.ADDRESS_LINE2] ?: defaults.addressLine2,
-            gstin = prefs[Keys.GSTIN]?.takeIf { it.isNotBlank() } ?: defaults.gstin,
+            gstin = prefs[Keys.GSTIN]?.trim()?.takeUnless { it.isBlank() || it.equals("NaN", ignoreCase = true) } ?: defaults.gstin,
             currencySymbol = prefs[Keys.CURRENCY_SYMBOL] ?: defaults.currencySymbol,
             memoPrefix = prefs[Keys.MEMO_PREFIX] ?: defaults.memoPrefix,
             nextMemoNumber = prefs[Keys.NEXT_MEMO_NUMBER] ?: defaults.nextMemoNumber,
             defaultTaxPercentage = prefs[Keys.DEFAULT_TAX_PCT] ?: defaults.defaultTaxPercentage,
             enableTax = prefs[Keys.ENABLE_TAX] ?: defaults.enableTax,
             taxType = prefs[Keys.TAX_TYPE] ?: defaults.taxType,
-            upiVpa = prefs[Keys.UPI_VPA] ?: defaults.upiVpa,
+            upiVpa = prefs[Keys.UPI_VPA]?.trim() ?: defaults.upiVpa,
+            upiDefaultNote = prefs[Keys.UPI_DEFAULT_NOTE] ?: defaults.upiDefaultNote,
             signerName = prefs[Keys.SIGNER_NAME] ?: defaults.signerName,
             termsNote = prefs[Keys.TERMS_NOTE]?.takeIf { it.isNotBlank() } ?: defaults.termsNote,
             serverBaseUrl = prefs[Keys.SERVER_BASE_URL] ?: defaults.serverBaseUrl,
@@ -85,14 +87,15 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.EMAIL] = settings.email
             prefs[Keys.ADDRESS_LINE1] = settings.addressLine1
             prefs[Keys.ADDRESS_LINE2] = settings.addressLine2
-            prefs[Keys.GSTIN] = settings.gstin.ifBlank { "NaN" }
+            prefs[Keys.GSTIN] = settings.gstin.trim().takeUnless { it.equals("NaN", ignoreCase = true) } ?: ""
             prefs[Keys.CURRENCY_SYMBOL] = settings.currencySymbol.ifBlank { "₹" }
             prefs[Keys.MEMO_PREFIX] = settings.memoPrefix
             prefs[Keys.NEXT_MEMO_NUMBER] = settings.nextMemoNumber.coerceAtLeast(1)
             prefs[Keys.DEFAULT_TAX_PCT] = settings.defaultTaxPercentage
             prefs[Keys.ENABLE_TAX] = settings.enableTax
             prefs[Keys.TAX_TYPE] = settings.taxType
-            prefs[Keys.UPI_VPA] = settings.upiVpa
+            prefs[Keys.UPI_VPA] = settings.upiVpa.trim()
+            prefs[Keys.UPI_DEFAULT_NOTE] = settings.upiDefaultNote.trim()
             prefs[Keys.SIGNER_NAME] = settings.signerName
             prefs[Keys.TERMS_NOTE] = settings.termsNote.ifBlank { defaults.termsNote }
             prefs[Keys.SERVER_BASE_URL] = settings.serverBaseUrl.trim()

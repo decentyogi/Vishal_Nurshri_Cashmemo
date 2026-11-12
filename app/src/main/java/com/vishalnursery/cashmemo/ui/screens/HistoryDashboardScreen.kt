@@ -1,6 +1,8 @@
 package com.vishalnursery.cashmemo.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,9 +20,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -28,6 +36,9 @@ import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,6 +48,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,29 +65,69 @@ import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.DashboardStats
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
+import com.vishalnursery.cashmemo.domain.model.round2
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.ui.components.KpiSummaryPill
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryDashboardScreen(
     memos: List<CashMemo>,
     stats: DashboardStats,
     settings: BusinessSettings,
     searchQuery: String,
+    selectedDate: String,
     activeFilter: MemoFilter,
     onSearchQueryChange: (String) -> Unit,
+    onSelectedDateChange: (String) -> Unit,
     onFilterChange: (MemoFilter) -> Unit,
     onEditMemo: (CashMemo) -> Unit,
     onDuplicateMemo: (CashMemo) -> Unit,
     onPrintMemo: (CashMemo) -> Unit,
     onShareMemo: (CashMemo) -> Unit,
+    onShareMemoJpeg: (CashMemo) -> Unit,
+    onShareMemoPdf: (CashMemo) -> Unit,
     onDeleteMemo: (String) -> Unit,
     onExportCsv: () -> Unit,
     onExportJsonBackup: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var expandedDates by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val millis = datePickerState.selectedDateMillis
+                    if (millis != null) {
+                        val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.ENGLISH).apply {
+                            timeZone = TimeZone.getTimeZone("UTC")
+                        }
+                        onSelectedDateChange(sdf.format(Date(millis)))
+                    }
+                    showDatePicker = false
+                }) {
+                    Text("Filter Date")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 
     pendingDeleteId?.let { targetId ->
         AlertDialog(
@@ -132,14 +184,30 @@ fun HistoryDashboardScreen(
             )
         }
 
-        // Search Bar
+        // Search Bar + Calendar Date Picker
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchQueryChange,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (searchQuery.isNotBlank()) {
+                        IconButton(onClick = { onSearchQueryChange("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear Search")
+                        }
+                    }
+                    IconButton(onClick = { showDatePicker = true }) {
+                        Icon(
+                            Icons.Default.CalendarMonth,
+                            contentDescription = "Filter by Calendar Date",
+                            tint = if (selectedDate.isNotBlank()) NurseryColors.Maroon else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
             placeholder = {
                 Text(
-                    text = "Search memo #, customer, mobile...",
+                    text = "Search memo #, customer, mobile, date...",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -147,6 +215,25 @@ fun HistoryDashboardScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+
+        if (selectedDate.isNotBlank()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = true,
+                    onClick = { onSelectedDateChange("") },
+                    label = { Text("Date: $selectedDate") },
+                    trailingIcon = {
+                        Icon(Icons.Default.Close, contentDescription = "Clear Date Filter", modifier = Modifier.size(16.dp))
+                    }
+                )
+                TextButton(onClick = { showDatePicker = true }) {
+                    Text("Change Date")
+                }
+            }
+        }
 
         // Filter Chips Row
         Row(
@@ -225,20 +312,109 @@ fun HistoryDashboardScreen(
                 )
             }
         } else {
+            val groupedEntries = remember(memos) {
+                memos.groupBy { it.date.ifBlank { "Undated" } }
+                    .entries
+                    .sortedByDescending { entry -> entry.value.maxOfOrNull { it.createdAt } ?: 0L }
+                    .toList()
+            }
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(memos, key = { it.id }) { memo ->
-                    MemoHistoryCard(
-                        memo = memo,
-                        currencySymbol = settings.currencySymbol,
-                        onEdit = { onEditMemo(memo) },
-                        onDuplicate = { onDuplicateMemo(memo) },
-                        onPrint = { onPrintMemo(memo) },
-                        onShare = { onShareMemo(memo) },
-                        onDelete = { pendingDeleteId = memo.id }
-                    )
+                items(groupedEntries, key = { it.key }) { (dateKey, dayMemos) ->
+                    val defaultExpanded = selectedDate.isNotBlank() ||
+                        searchQuery.isNotBlank() ||
+                        groupedEntries.firstOrNull()?.key == dateKey
+                    val isExpanded = expandedDates[dateKey] ?: defaultExpanded
+                    val daySales = round2(dayMemos.sumOf { it.totalPayable })
+                    val dayCollected = round2(dayMemos.sumOf { it.paidAmount })
+                    val dayDue = round2(dayMemos.sumOf { it.balanceDue })
+
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
+                        border = BorderStroke(1.dp, NurseryColors.Maroon.copy(alpha = 0.35f))
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        expandedDates = expandedDates.toMutableMap().apply {
+                                            put(dateKey, !isExpanded)
+                                        }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Sales on $dateKey",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = NurseryColors.Maroon
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = NurseryColors.MaroonLight
+                                        ) {
+                                            Text(
+                                                text = "${dayMemos.size} ${if (dayMemos.size == 1) "Bill" else "Bills"}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = NurseryColors.Maroon,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = "Sales: ${IndianCurrencyFormatter.formatInr(daySales, settings.currencySymbol, false)}  •  " +
+                                            "Paid: ${IndianCurrencyFormatter.formatInr(dayCollected, settings.currencySymbol, false)}  •  " +
+                                            "Due: ${IndianCurrencyFormatter.formatInr(dayDue, settings.currencySymbol, false)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (isExpanded) "Collapse Date" else "Expand Date",
+                                    tint = NurseryColors.Maroon
+                                )
+                            }
+
+                            AnimatedVisibility(visible = isExpanded) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    dayMemos.forEach { memo ->
+                                        MemoHistoryCard(
+                                            memo = memo,
+                                            currencySymbol = settings.currencySymbol,
+                                            onEdit = { onEditMemo(memo) },
+                                            onDuplicate = { onDuplicateMemo(memo) },
+                                            onPrint = { onPrintMemo(memo) },
+                                            onShare = { onShareMemo(memo) },
+                                            onShareJpeg = { onShareMemoJpeg(memo) },
+                                            onSharePdf = { onShareMemoPdf(memo) },
+                                            onDelete = { pendingDeleteId = memo.id }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -253,6 +429,8 @@ private fun MemoHistoryCard(
     onDuplicate: () -> Unit,
     onPrint: () -> Unit,
     onShare: () -> Unit,
+    onShareJpeg: () -> Unit,
+    onSharePdf: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
@@ -351,8 +529,14 @@ private fun MemoHistoryCard(
                 IconButton(onClick = onPrint) {
                     Icon(Icons.Default.Print, contentDescription = "Print Memo")
                 }
+                IconButton(onClick = onShareJpeg) {
+                    Icon(Icons.Default.Image, contentDescription = "Send As JPEG", tint = NurseryColors.BotanicalGreen)
+                }
+                IconButton(onClick = onSharePdf) {
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = "Send As PDF", tint = NurseryColors.Maroon)
+                }
                 IconButton(onClick = onShare) {
-                    Icon(Icons.Default.Share, contentDescription = "Share Memo")
+                    Icon(Icons.Default.Share, contentDescription = "Share Text Summary")
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "Delete Memo", tint = NurseryColors.DueRed)

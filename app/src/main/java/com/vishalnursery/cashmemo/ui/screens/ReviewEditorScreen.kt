@@ -102,6 +102,7 @@ fun ReviewEditorScreen(
     onSaveMemo: (Boolean) -> Unit,
     onShareAsJpeg: () -> Unit,
     onShareAsPdf: () -> Unit,
+    onSavePermanentQr: (String, String, String) -> Unit = { _, _, _ -> },
     onNewMemo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -110,9 +111,14 @@ fun ReviewEditorScreen(
     var showQrDialog by remember { mutableStateOf(false) }
 
     if (showQrDialog) {
+        val explicitPaid = editorState.paidAmountText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        val qrAmount = explicitPaid ?: calc.totalPayable.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
         UpiQrDialog(
-            amount = calc.totalPayable,
+            initialAmount = qrAmount,
             settings = settings,
+            billLabel = "Memo #${editorState.memoNumber}",
+            initialTab = 0,
+            onSavePermanentQr = onSavePermanentQr,
             onDismiss = { showQrDialog = false }
         )
     }

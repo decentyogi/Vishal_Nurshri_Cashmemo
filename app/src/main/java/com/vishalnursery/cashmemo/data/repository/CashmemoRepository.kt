@@ -71,10 +71,18 @@ class CashmemoRepository(
                     "Fully Paid"
                 }
             )
+            val previousVersion = memoDao.getMemoById(cleanMemo.id)?.toDomain()
 
             memoDao.upsertMemoWithItems(cleanMemo.toEntity(), cleanMemo.toItemEntities())
             settingsDataStore.incrementNextMemoIfNeeded(cleanMemo.memoNumber)
-            syncCustomerFromBillLocally(cleanMemo)
+            if (previousVersion == null) {
+                syncCustomerFromBillLocally(cleanMemo)
+            } else {
+                reconcileCustomerFromMemos(cleanMemo.customerName, cleanMemo.customerMobile, cleanMemo.customerAddress)
+                if (!sameCustomerKey(previousVersion.customerName, previousVersion.customerMobile, cleanMemo.customerName, cleanMemo.customerMobile)) {
+                    reconcileCustomerFromMemos(previousVersion.customerName, previousVersion.customerMobile, previousVersion.customerAddress)
+                }
+            }
 
             val settings = settingsDataStore.getSettingsOnce()
             var finalMemo = cleanMemo
@@ -92,7 +100,11 @@ class CashmemoRepository(
     }
 
     suspend fun deleteMemo(id: String) = withContext(Dispatchers.IO) {
+        val existingMemo = memoDao.getMemoById(id)?.toDomain()
         memoDao.deleteMemoById(id)
+        if (existingMemo != null) {
+            reconcileCustomerFromMemos(existingMemo.customerName, existingMemo.customerMobile, existingMemo.customerAddress)
+        }
         val settings = settingsDataStore.getSettingsOnce()
         if (settings.autoSyncEnabled && settings.serverBaseUrl.isNotBlank()) {
             runCatching { DynamicBaseUrlClient.getService(settings.serverBaseUrl)?.deleteBill(id) }
@@ -311,5 +323,78 @@ class CashmemoRepository(
             )
             customerDao.upsertCustomer(newCustomer.toEntity())
         }
+    }
+
+    private fun sameCustomerKey(nameA: String, phoneA: String, nameB: String, phoneB: String): Boolean {
+        val cleanPhoneA = phoneA.trim()
+        val cleanPhoneB = phoneB.trim()
+        if (cleanPhoneA.isNotEmpty() && cleanPhoneB.isNotEmpty()) {
+            return cleanPhoneA == cleanPhoneB
+        }
+        return nameA.trim().isNotEmpty() && nameA.trim().equals(nameB.trim(), ignoreCase = true)
+    }
+
+    private suspend fun reconcileCustomerFromMemos(rawName: String, rawPhone: String, rawAddress: String) {
+        val name = rawName.trim()
+        val phone = rawPhone.trim()
+        if (name.isEmpty() && phone.isEmpty()) return
+
+        val allCustomers = customerDao.getAllCustomersOnce()
+        val matchedCustomer = allCustomers.firstOrNull { c ->
+            (phone.isNotEmpty() && c.phoneNumber.trim() == phone) ||
+                (name.isNotEmpty() && c.name.trim().equals(name, ignoreCase = true))
+        } ?: return
+
+        val customerMemos = memoDao.getAllMemosOnce()
+            .map { it.toDomain() }
+            .filter { m ->
+                (phone.isNotEmpty() && m.customerMobile.trim() == phone) ||
+                    (name.isNotEmpty() && m.customerName.trim().equals(name, ignoreCase = true)) ||
+                    (matchedCustomer.phoneNumber.trim().isNotEmpty() && m.customerMobile.trim() == matchedCustomer.phoneNumber.trim()) ||
+                    (matchedCustomer.name.trim().isNotEmpty() && m.customerName.trim().equals(matchedCustomer.name.trim(), ignoreCase = true))
+            }
+            .sortedBy { it.createdAt }
+
+        if (customerMemos.isEmpty()) {
+            customerDao.upsertCustomer(
+                matchedCustomer.copy(
+                    outstandingBalance = 0.0,
+                    totalPurchased = 0.0,
+                    totalPaid = 0.0,
+                    lastPromiseNote = "Fully Paid",
+                    lastTransactionAt = System.currentTimeMillis()
+                )
+            )
+            return
+        }
+
+        var runningBal = 0.0
+        var sumPurchased = 0.0
+        var sumPaid = 0.0
+        for ((idx, m) in customerMemos.withIndex()) {
+            sumPurchased += m.grandTotal
+            sumPaid += m.paidAmount
+            runningBal = if (idx == 0) {
+                m.balanceDue
+            } else if (m.previousDues > 0.009 || (m.previousDues >= runningBal && runningBal > 0.009)) {
+                m.balanceDue
+            } else {
+                round2(max(0.0, runningBal + (m.grandTotal - m.paidAmount)))
+            }
+        }
+        val cleanBal = round2(max(0.0, runningBal))
+        val latest = customerMemos.last()
+        customerDao.upsertCustomer(
+            matchedCustomer.copy(
+                name = name.ifEmpty { matchedCustomer.name },
+                phoneNumber = phone.ifEmpty { matchedCustomer.phoneNumber },
+                address = rawAddress.trim().ifEmpty { matchedCustomer.address },
+                outstandingBalance = cleanBal,
+                totalPurchased = round2(sumPurchased),
+                totalPaid = round2(sumPaid),
+                lastPromiseNote = if (cleanBal > 0.009) latest.paymentStatusNote.ifBlank { "Carry Forward" } else "Fully Paid",
+                lastTransactionAt = latest.updatedAt
+            )
+        )
     }
 }

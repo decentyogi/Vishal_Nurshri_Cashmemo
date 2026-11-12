@@ -268,32 +268,28 @@ object BillDocumentRenderer {
         }
         canvas.drawLine(cLeft, 422f, cRight, 422f, headerLinePaint)
 
-        // --- Memo & Customer Info Block (Center-aligned on every page) ---
-        val labelPaint = textPaint(27f, CLASSIC_MAROON, bold = true)
-        val valuePaint = textPaint(27f, INK_DARK, bold = true)
+        // --- Memo & Customer Info Block (2-Column, 3-Row compact layout) ---
+        val labelPaint = textPaint(28f, CLASSIC_MAROON, bold = true)
+        val valuePaint = textPaint(28f, INK_DARK, bold = true)
         val subtleRulePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = CLASSIC_ROW_DIVIDER
             strokeWidth = 1.6f
         }
 
-        // Row 1 (Centered): नं० [ MemoNo (Page X/Y) ]   दिनांक: Date
-        val noLabel = "नं० "
-        val noLabelW = labelPaint.measureText(noLabel)
-        val memoBoxText = "${memo.memoNumber} (Page ${pageIndex + 1}/$totalPages)"
-        val memoBoxTextPaint = textPaint(26f, CLASSIC_DARK_MAROON, bold = true)
-        val memoBoxW = maxOf(310f, memoBoxTextPaint.measureText(memoBoxText) + 52f)
-        val dateLabel = "दिनांक: "
-        val dateText = memo.date.trim()
-        val dateCombinedW = labelPaint.measureText(dateLabel) +
-            if (dateText.isNotEmpty()) valuePaint.measureText(dateText) else 150f
-        val row1Gap = 44f
-        val row1TotalW = noLabelW + memoBoxW + row1Gap + dateCombinedW
-        val row1StartX = (centerX - row1TotalW / 2f).coerceAtLeast(cLeft)
+        // Left Column: ~58% width (from cLeft to leftColRight)
+        // Right Column: ~42% width (from rightColLeft to cRight)
+        val leftColRight = cLeft + contentWidth * 0.58f // ~1029.28f -> 1030f
+        val rightColLeft = leftColRight + 30f          // ~1060f
 
-        canvas.drawText(noLabel, row1StartX, 474f, labelPaint)
-        val noBoxLeft = row1StartX + noLabelW
-        val noBoxRight = noBoxLeft + memoBoxW
-        val noBoxRect = RectF(noBoxLeft, 438f, noBoxRight, 488f)
+        val valLeft = cLeft + 84f
+        val valRight = leftColRight
+        val valCenterX = (valLeft + valRight) / 2f
+
+        // Row 1:
+        // Left: Label नं० anchored on the left, followed by the maroon-bordered rounded box displaying <Memo_No> (Page X/Y)
+        canvas.drawText("नं०", cLeft, 476f, labelPaint)
+        val memoBoxText = "${memo.memoNumber} (Page ${pageIndex + 1}/$totalPages)"
+        val noBoxRect = RectF(valLeft, 438f, valRight, 492f)
         val boxStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = CLASSIC_MAROON
             style = Paint.Style.STROKE
@@ -305,64 +301,87 @@ object BillDocumentRenderer {
         }
         canvas.drawRoundRect(noBoxRect, 10f, 10f, boxFill)
         canvas.drawRoundRect(noBoxRect, 10f, 10f, boxStroke)
-        drawCenteredText(canvas, memoBoxText, noBoxRect.centerX(), 473f, memoBoxTextPaint)
+        drawCenteredText(
+            canvas,
+            memoBoxText,
+            valCenterX,
+            475f,
+            textPaint(27f, CLASSIC_DARK_MAROON, bold = true)
+        )
 
-        val dateStartX = noBoxRight + row1Gap
+        // Right: Label दिनांक: anchored at the start of right column, with <DD/MM/YYYY> horizontally centered in value space
+        val dateLabel = "दिनांक: "
         val dateLabelW = labelPaint.measureText(dateLabel)
-        canvas.drawText(dateLabel, dateStartX, 474f, labelPaint)
-        if (dateText.isNotEmpty()) {
-            canvas.drawText(dateText, dateStartX + dateLabelW, 474f, valuePaint)
-        } else {
-            canvas.drawLine(dateStartX + dateLabelW, 480f, dateStartX + dateLabelW + 150f, 480f, subtleRulePaint)
+        canvas.drawText(dateLabel, rightColLeft, 476f, labelPaint)
+        val rightValStart = rightColLeft + dateLabelW + 6f
+        val rightValCenter = (rightValStart + cRight) / 2f
+        canvas.drawLine(rightValStart, 483f, cRight, 483f, subtleRulePaint)
+        if (memo.date.isNotBlank()) {
+            drawCenteredEllipsizedText(
+                canvas = canvas,
+                text = memo.date.trim(),
+                centerX = rightValCenter,
+                baselineY = 476f,
+                maxWidth = cRight - rightValStart - 10f,
+                paint = valuePaint
+            )
         }
 
-        // Row 2 (Centered): नामः <Customer Name>
-        drawCenteredLabelValueRow(
-            canvas = canvas,
-            centerX = centerX,
-            maxRowWidth = contentWidth - 40f,
-            baselineY = 530f,
-            label = "नामः ",
-            value = memo.customerName.trim(),
-            labelPaint = labelPaint,
-            valuePaint = valuePaint,
-            rulePaint = subtleRulePaint
-        )
+        // Row 2:
+        // Left: Label नामः anchored on left (aligned under नं०), with <Customer Name> horizontally centered within value area
+        canvas.drawText("नामः ", cLeft, 536f, labelPaint)
+        canvas.drawLine(valLeft, 543f, valRight, 543f, subtleRulePaint)
+        if (memo.customerName.isNotBlank()) {
+            drawCenteredEllipsizedText(
+                canvas = canvas,
+                text = memo.customerName.trim(),
+                centerX = valCenterX,
+                baselineY = 536f,
+                maxWidth = valRight - valLeft - 16f,
+                paint = valuePaint
+            )
+        }
 
-        // Row 3 (Centered): मो०: <Mobile No>
-        drawCenteredLabelValueRow(
-            canvas = canvas,
-            centerX = centerX,
-            maxRowWidth = contentWidth - 40f,
-            baselineY = 578f,
-            label = "मो०: ",
-            value = memo.customerMobile.trim(),
-            labelPaint = labelPaint,
-            valuePaint = valuePaint,
-            rulePaint = subtleRulePaint
-        )
+        // Right: Label मो०: anchored at start of right column (aligned under दिनांक:), with <Customer Mobile> horizontally centered directly underneath <DD/MM/YYYY>
+        val mobLabel = "मो०: "
+        val mobLabelW = labelPaint.measureText(mobLabel)
+        canvas.drawText(mobLabel, rightColLeft, 536f, labelPaint)
+        val rightMobValStart = rightColLeft + mobLabelW + 6f
+        canvas.drawLine(rightMobValStart, 543f, cRight, 543f, subtleRulePaint)
+        if (memo.customerMobile.isNotBlank()) {
+            drawCenteredEllipsizedText(
+                canvas = canvas,
+                text = memo.customerMobile.trim(),
+                centerX = rightValCenter,
+                baselineY = 536f,
+                maxWidth = cRight - rightValStart - 10f,
+                paint = valuePaint
+            )
+        }
 
-        // Row 4 (Centered): पता: <Address>
-        drawCenteredLabelValueRow(
-            canvas = canvas,
-            centerX = centerX,
-            maxRowWidth = contentWidth - 40f,
-            baselineY = 626f,
-            label = "पता: ",
-            value = memo.customerAddress.trim(),
-            labelPaint = labelPaint,
-            valuePaint = valuePaint,
-            rulePaint = subtleRulePaint
-        )
+        // Row 3:
+        // Left: Label पता: anchored on left (aligned under नामः), with <Customer Address> horizontally centered within value area
+        canvas.drawText("पता: ", cLeft, 594f, labelPaint)
+        canvas.drawLine(valLeft, 601f, valRight, 601f, subtleRulePaint)
+        if (memo.customerAddress.isNotBlank()) {
+            drawCenteredEllipsizedText(
+                canvas = canvas,
+                text = memo.customerAddress.trim(),
+                centerX = valCenterX,
+                baselineY = 594f,
+                maxWidth = valRight - valLeft - 16f,
+                paint = valuePaint
+            )
+        }
 
         // --- Items Table (Strict 15 Rows Per Page) ---
-        val tableTop = 652f
+        val tableTop = 626f
         val thHeight = 68f
-        val rowsTop = tableTop + thHeight // 720f
-        val rowHeight = 76f
-        val rowsBottom = rowsTop + CLASSIC_ITEMS_PER_PAGE * rowHeight // 1860f
-        val summaryHeight = 74f
-        val tableBottom = rowsBottom + summaryHeight // 1934f
+        val rowsTop = tableTop + thHeight // 694f
+        val rowHeight = 78f
+        val rowsBottom = rowsTop + CLASSIC_ITEMS_PER_PAGE * rowHeight // 1864f
+        val summaryHeight = 76f
+        val tableBottom = rowsBottom + summaryHeight // 1940f
 
         // Column X boundaries (width total = 1616f)
         val col0 = cLeft            // 92f
@@ -1067,33 +1086,20 @@ object BillDocumentRenderer {
         drawRightText(canvas, value, rightX, baselineY, paint)
     }
 
-    private fun drawCenteredLabelValueRow(
+    private fun drawCenteredEllipsizedText(
         canvas: Canvas,
+        text: String,
         centerX: Float,
-        maxRowWidth: Float,
         baselineY: Float,
-        label: String,
-        value: String,
-        labelPaint: TextPaint,
-        valuePaint: TextPaint,
-        rulePaint: Paint
+        maxWidth: Float,
+        paint: TextPaint
     ) {
-        val labelW = labelPaint.measureText(label)
-        val availValW = (maxRowWidth - labelW).coerceAtLeast(80f)
-        if (value.isNotEmpty()) {
-            val clippedVal = TextUtils.ellipsize(value, valuePaint, availValW, TextUtils.TruncateAt.END).toString()
-            val valW = valuePaint.measureText(clippedVal)
-            val totalW = labelW + valW
-            val startX = centerX - totalW / 2f
-            canvas.drawText(label, startX, baselineY, labelPaint)
-            canvas.drawText(clippedVal, startX + labelW, baselineY, valuePaint)
-        } else {
-            val blankW = 240f.coerceAtMost(availValW)
-            val totalW = labelW + blankW
-            val startX = centerX - totalW / 2f
-            canvas.drawText(label, startX, baselineY, labelPaint)
-            canvas.drawLine(startX + labelW, baselineY + 6f, startX + totalW, baselineY + 6f, rulePaint)
-        }
+        if (text.isEmpty() || maxWidth <= 0f) return
+        val clipped = TextUtils.ellipsize(text, paint, maxWidth, TextUtils.TruncateAt.END).toString()
+        val oldAlign = paint.textAlign
+        paint.textAlign = Paint.Align.CENTER
+        canvas.drawText(clipped, centerX, baselineY, paint)
+        paint.textAlign = oldAlign
     }
 
     private fun drawSingleLineEllipsized(

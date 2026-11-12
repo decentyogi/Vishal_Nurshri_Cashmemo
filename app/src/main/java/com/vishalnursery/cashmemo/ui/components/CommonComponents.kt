@@ -17,10 +17,14 @@ import android.print.PrintDocumentAdapter
 import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.print.pdf.PrintedPdfDocument
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,6 +64,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -67,7 +72,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
@@ -75,6 +82,7 @@ import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.QrCodeGenerator
+import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import java.io.File
 import java.io.FileOutputStream
 
@@ -97,17 +105,8 @@ fun UpiQrDialog(
     var storeNote by remember(settings.upiDefaultNote) { mutableStateOf(settings.upiDefaultNote) }
     var storeSavedFeedback by remember { mutableStateOf(false) }
 
-    // Custom One-Time QR state
-    var customAmountText by remember(initialAmount) {
-        mutableStateOf(
-            if (initialAmount.isFinite() && initialAmount > 0.009) {
-                if (initialAmount % 1.0 == 0.0) initialAmount.toLong().toString()
-                else String.format(java.util.Locale.US, "%.2f", initialAmount)
-            } else {
-                ""
-            }
-        )
-    }
+    // Custom One-Time QR state (blank by default with placeholder hint)
+    var customAmountText by remember { mutableStateOf("") }
     var customVpa by remember(settings.upiVpa) { mutableStateOf(settings.upiVpa) }
     var customPayeeName by remember(settings.shopNameEnglish) { mutableStateOf(settings.shopNameEnglish) }
     var customNote by remember(billLabel, settings.upiDefaultNote) {
@@ -266,93 +265,160 @@ fun UpiQrDialog(
         }
     }
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(vertical = 16.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            shadowElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Header Bar (Title + QR Icon on Left, ✕ Close on Right)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Icons.Default.QrCode2, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.QrCode2,
+                            contentDescription = null,
+                            tint = NurseryColors.Maroon,
+                            modifier = Modifier.size(24.dp)
+                        )
                         Text(
                             text = "UPI QR Manager",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = NurseryColors.Maroon
                         )
                     }
-                    if (activeAmount > 0.009) {
-                        Text(
-                            text = IndianCurrencyFormatter.formatInr(activeAmount, settings.currencySymbol),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.secondary
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = activeTab == 0,
-                        onClick = { activeTab = 0 },
-                        label = { Text("Store Permanent QR") },
-                        modifier = Modifier.weight(1f)
-                    )
-                    FilterChip(
-                        selected = activeTab == 1,
-                        onClick = { activeTab = 1 },
-                        label = { Text("Custom Amount QR") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
+
+                // Sleek Single-Line Tab Switcher (Segmented Pill)
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(50),
+                    color = NurseryColors.CreamBackground,
+                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(50))
+                                .background(if (activeTab == 0) NurseryColors.Maroon else Color.Transparent)
+                                .clickable { activeTab = 0 }
+                                .padding(vertical = 8.dp, horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Permanent QR",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (activeTab == 0) FontWeight.Bold else FontWeight.Medium,
+                                color = if (activeTab == 0) Color.White else NurseryColors.Maroon,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(50))
+                                .background(if (activeTab == 1) NurseryColors.Maroon else Color.Transparent)
+                                .clickable { activeTab = 1 }
+                                .padding(vertical = 8.dp, horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Custom Amount QR",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (activeTab == 1) FontWeight.Bold else FontWeight.Medium,
+                                color = if (activeTab == 1) Color.White else NurseryColors.Maroon,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                // QR Preview Card (16dp corners, 16dp–20dp padding, no clipped edges)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
                     color = Color.White,
+                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
                     shadowElevation = 2.dp,
-                    modifier = Modifier.clickable(enabled = qrBitmap != null) { showFullScreen = true }
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = qrBitmap != null) { showFullScreen = true }
                 ) {
                     if (qrBitmap != null) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(12.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Image(
                                 bitmap = qrBitmap.asImageBitmap(),
                                 contentDescription = "UPI QR Code",
-                                modifier = Modifier.size(196.dp)
+                                modifier = Modifier
+                                    .size(200.dp)
+                                    .padding(4.dp)
                             )
                             Text(
                                 text = activeVpa.trim(),
                                 fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.labelLarge,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = NurseryColors.Maroon,
+                                textAlign = TextAlign.Center
                             )
                             Text(
                                 text = "Tap QR for full-screen counter display",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
                             )
                         }
                     } else {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(18.dp),
+                                .padding(20.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
@@ -365,19 +431,33 @@ fun UpiQrDialog(
                     }
                 }
 
+                // Balanced Action Buttons (50% / 50% width, 12dp gap, single line)
                 if (qrBitmap != null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         OutlinedButton(
                             onClick = { showFullScreen = true },
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(50),
+                            border = BorderStroke(1.2.dp, NurseryColors.Maroon),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.Fullscreen, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Full Screen", maxLines = 1)
+                            Icon(
+                                Icons.Default.Fullscreen,
+                                contentDescription = null,
+                                tint = NurseryColors.Maroon,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Full Screen",
+                                color = NurseryColors.Maroon,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                         Button(
                             onClick = {
@@ -392,101 +472,131 @@ fun UpiQrDialog(
                                 )
                             },
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Save / Share", maxLines = 1)
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Save / Share",
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     }
                 }
 
-                HorizontalDivider()
+                HorizontalDivider(color = NurseryColors.OutlineSoft)
 
+                // Tab Contents with 12dp spacing and rounded input boxes
                 if (activeTab == 0) {
-                    OutlinedTextField(
-                        value = storeVpa,
-                        onValueChange = {
-                            storeVpa = it
-                            storeSavedFeedback = false
-                        },
-                        label = { Text("Store UPI ID (e.g. name@ybl)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = storePayeeName,
-                        onValueChange = {
-                            storePayeeName = it
-                            storeSavedFeedback = false
-                        },
-                        label = { Text("Payee / Nursery Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = storeNote,
-                        onValueChange = {
-                            storeNote = it
-                            storeSavedFeedback = false
-                        },
-                        label = { Text("Default Payment Note (Optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Button(
-                        onClick = {
-                            onSavePermanentQr(storeVpa.trim(), storePayeeName.trim(), storeNote.trim())
-                            storeSavedFeedback = true
-                        },
-                        enabled = hasValidVpa || storeVpa.isBlank(),
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                        shape = RoundedCornerShape(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (storeSavedFeedback) "Permanent Store QR Saved ✓" else "Save Permanent Store QR")
+                        OutlinedTextField(
+                            value = storeVpa,
+                            onValueChange = {
+                                storeVpa = it
+                                storeSavedFeedback = false
+                            },
+                            label = { Text("Store UPI ID (e.g. name@ybl)") },
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = storePayeeName,
+                            onValueChange = {
+                                storePayeeName = it
+                                storeSavedFeedback = false
+                            },
+                            label = { Text("Payee / Nursery Name") },
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = storeNote,
+                            onValueChange = {
+                                storeNote = it
+                                storeSavedFeedback = false
+                            },
+                            label = { Text("Default Payment Note (Optional)") },
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(
+                            onClick = {
+                                onSavePermanentQr(storeVpa.trim(), storePayeeName.trim(), storeNote.trim())
+                                storeSavedFeedback = true
+                            },
+                            enabled = hasValidVpa || storeVpa.isBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (storeSavedFeedback) "Permanent Store QR Saved ✓" else "Save Permanent Store QR",
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
                     }
                 } else {
-                    OutlinedTextField(
-                        value = customAmountText,
-                        onValueChange = { customAmountText = it },
-                        label = { Text("Custom Amount (₹)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = customVpa,
-                        onValueChange = { customVpa = it },
-                        label = { Text("UPI ID") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = customPayeeName,
-                        onValueChange = { customPayeeName = it },
-                        label = { Text("Payee Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = customNote,
-                        onValueChange = { customNote = it },
-                        label = { Text("Transaction Note (Optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = customAmountText,
+                            onValueChange = { customAmountText = it },
+                            label = { Text("Custom Amount (₹)") },
+                            placeholder = { Text("Enter amount (optional)") },
+                            shape = RoundedCornerShape(12.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = customVpa,
+                            onValueChange = { customVpa = it },
+                            label = { Text("UPI ID") },
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = customPayeeName,
+                            onValueChange = { customPayeeName = it },
+                            label = { Text("Payee Name") },
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = customNote,
+                            onValueChange = { customNote = it },
+                            label = { Text("Transaction Note (Optional)") },
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
         }
-    )
+    }
 }
 
 @Composable

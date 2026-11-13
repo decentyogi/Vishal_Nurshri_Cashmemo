@@ -19,6 +19,15 @@ object NurseryColors {
     val InkDark = Color(0xFF1F1A1C)
     val MutedText = Color(0xFF6B5F63)
     val OutlineSoft = Color(0xFFE2D9D0)
+
+    // Aliases for compatibility
+    val DarkInk = InkDark
+    val InkMedium = MutedText
+    val MutedInk = MutedText
+    val GreenSoft = BotanicalGreenLight
+    val GreenHeader = BotanicalGreen
+    val WarningSoft = DueRedContainer
+    val WarningHeader = DueRed
 }
 
 private val LightColorScheme = lightColorScheme(

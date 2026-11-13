@@ -226,7 +226,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 onSaveMemo = viewModel::saveCurrentMemo,
                 onShareAsJpeg = viewModel::shareCurrentEditorAsJpeg,
                 onShareAsPdf = viewModel::shareCurrentEditorAsPdf,
-                onSavePermanentQr = viewModel::savePermanentUpiConfig,
+                onSavePermanentQr = { vpa, payee, note -> viewModel.savePermanentUpiConfig(vpa, payee, note) },
                 onNewMemo = viewModel::startNewBlankMemo,
                 modifier = contentModifier
             )
@@ -284,7 +284,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 isDetectingModels = uiState.scanner.isDetectingModels,
                 safetySnapshots = viewModel.listSafetySnapshots(),
                 onSaveSettings = viewModel::saveSettings,
-                onSavePermanentQr = viewModel::savePermanentUpiConfig,
+                onSavePermanentQr = { vpa, payee, note -> viewModel.savePermanentUpiConfig(vpa, payee, note) },
                 onDetectFlashModels = viewModel::detectAvailableGeminiModels,
                 onTestConnection = viewModel::testConnection,
                 onRequestSync = viewModel::requestSyncDryRun,

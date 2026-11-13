@@ -634,7 +634,7 @@ class CashmemoViewModel(
         }
     }
 
-    fun saveCurrentMemo() {
+    fun saveCurrentMemo(printAfterSave: Boolean = false) {
         val editor = _uiState.value.editor
         val calc = editor.calculation
         val settings = _uiState.value.settings
@@ -674,6 +674,9 @@ class CashmemoViewModel(
             repository.saveMemo(memo)
                 .onSuccess { saved ->
                     _events.emit(UiEvent.ShowMessage("Memo #${saved.memoNumber} saved successfully"))
+                    if (printAfterSave) {
+                        _events.emit(UiEvent.TriggerPrint(saved, settings))
+                    }
                     _uiState.update {
                         it.copy(
                             activeDestination = AppDestination.HISTORY,
@@ -743,12 +746,13 @@ class CashmemoViewModel(
         }
     }
 
-    fun savePermanentUpiConfig(vpa: String, note: String) {
+    fun savePermanentUpiConfig(vpa: String, payeeName: String = "", note: String = "") {
         val current = _uiState.value.settings
         viewModelScope.launch {
             repository.saveSettings(
                 current.copy(
                     upiVpa = vpa.trim(),
+                    shopNameEnglish = if (payeeName.isNotBlank()) payeeName.trim() else current.shopNameEnglish,
                     upiDefaultNote = note.trim()
                 )
             ).onSuccess {
@@ -757,6 +761,10 @@ class CashmemoViewModel(
                 _events.emit(UiEvent.ShowMessage("Could not save QR: ${err.localizedMessage}"))
             }
         }
+    }
+
+    fun savePermanentUpiConfig(vpa: String, note: String) {
+        savePermanentUpiConfig(vpa, "", note)
     }
 
     // --- History & Ledger Actions ---
@@ -797,7 +805,7 @@ class CashmemoViewModel(
 
     fun deleteMemo(id: String) {
         viewModelScope.launch {
-            repository.deleteMemo(id)
+            runCatching { repository.deleteMemo(id) }
                 .onSuccess { _events.emit(UiEvent.ShowMessage("Memo deleted")) }
                 .onFailure { err -> _events.emit(UiEvent.ShowMessage("Delete failed: ${err.localizedMessage}")) }
         }
@@ -823,7 +831,19 @@ class CashmemoViewModel(
 
     fun shareMemoSummary(memo: CashMemo) {
         val settings = _uiState.value.settings
-        val summary = IndianCurrencyFormatter.buildBillShareText(memo, settings)
+        val summary = buildString {
+            appendLine("${settings.shopNameHindi} (${settings.shopNameEnglish})")
+            appendLine("Memo #${memo.memoNumber} | Date: ${memo.date}")
+            if (memo.customerName.isNotBlank()) appendLine("Customer: ${memo.customerName}")
+            appendLine("--------------------------------")
+            for (item in memo.items) {
+                appendLine("${item.description} x ${item.quantity} = ${IndianCurrencyFormatter.formatInr(item.amount, settings.currencySymbol)}")
+            }
+            appendLine("--------------------------------")
+            appendLine("Total: ${IndianCurrencyFormatter.formatInr(memo.totalPayable, settings.currencySymbol)}")
+            appendLine("Paid: ${IndianCurrencyFormatter.formatInr(memo.paidAmount, settings.currencySymbol)}")
+            appendLine("Balance: ${IndianCurrencyFormatter.formatInr(memo.balanceDue, settings.currencySymbol)}")
+        }
         viewModelScope.launch {
             _events.emit(
                 UiEvent.ShareFile(
@@ -905,12 +925,16 @@ class CashmemoViewModel(
         }
     }
 
-    fun settleCustomerDue(customer: CustomerProfile, amount: Double, promiseNote: String) {
+    fun settleCustomerDue(customerId: String, amount: Double, promiseNote: String) {
         viewModelScope.launch {
-            repository.recordCustomerPayment(customer.id, amount, promiseNote)
-                .onSuccess { msg -> _events.emit(UiEvent.ShowMessage(msg)) }
+            runCatching { repository.recordCustomerPayment(customerId, amount, promiseNote) }
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Payment recorded")) }
                 .onFailure { err -> _events.emit(UiEvent.ShowMessage("Payment failed: ${err.localizedMessage}")) }
         }
+    }
+
+    fun settleCustomerDue(customer: CustomerProfile, amount: Double, promiseNote: String) {
+        settleCustomerDue(customer.id, amount, promiseNote)
     }
 
     fun deleteCustomer(id: String) {
@@ -925,7 +949,11 @@ class CashmemoViewModel(
     }
 
     fun deletePlantRate(id: String) {
-        viewModelScope.launch { repository.deletePlantRate(id) }
+        viewModelScope.launch {
+            runCatching { repository.deletePlantRate(id) }
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Plant rate deleted")) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Delete failed: ${err.localizedMessage}")) }
+        }
     }
 
     fun exportPlantRatesJson() {

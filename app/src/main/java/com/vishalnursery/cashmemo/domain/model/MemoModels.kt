@@ -92,7 +92,8 @@ data class PlantRate(
     val name: String,
     val category: String = "Plants",
     val retailPrice: Double = 0.0,
-    val wholesalePrice: Double = 0.0
+    val wholesalePrice: Double = 0.0,
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 data class BusinessSettings(
@@ -119,8 +120,19 @@ data class BusinessSettings(
     val geminiApiKey: String = "",
     val geminiModel: String = "gemini-3.5-flash",
     val translationMode: TranslationMode = TranslationMode.ENGLISH_WITH_HINDI,
-    val billExportLayout: BillExportLayout = BillExportLayout.CLASSIC_NURSERY
+    val billExportLayout: BillExportLayout = BillExportLayout.CLASSIC_NURSERY,
+    val scanEngine: ScanEngine = ScanEngine.GEMINI
 )
+
+enum class ScanEngine(val wireValue: String, val label: String) {
+    GEMINI("gemini", "Gemini"),
+    OTHER_AI("other_ai", "Other AI");
+
+    companion object {
+        fun fromWire(value: String?): ScanEngine =
+            entries.firstOrNull { it.name.equals(value, ignoreCase = true) || it.wireValue.equals(value, ignoreCase = true) } ?: GEMINI
+    }
+}
 
 enum class BillExportLayout(val wireValue: String, val label: String, val shortLabel: String) {
     CLASSIC_NURSERY("classic_nursery", "Classic Nursery Bill (15-Item Paginated)", "Classic Nursery Bill"),
@@ -172,11 +184,6 @@ enum class MemoFilter(val label: String, val wireValue: String) {
     ALL("All", "ALL"),
     PENDING_DUE("Pending Due", "PENDING_DUE"),
     PAID("Paid", "PAID")
-}
-
-enum class OcrScriptMode(val label: String) {
-    HINDI_AND_ENGLISH("Hindi + English"),
-    ENGLISH_ONLY("English / Numbers")
 }
 
 data class MemoCalculationResult(

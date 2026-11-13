@@ -1,5 +1,6 @@
 package com.vishalnursery.cashmemo.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -86,5 +87,6 @@ data class PlantRateEntity(
     val name: String,
     val category: String,
     val retailPrice: Double,
-    val wholesalePrice: Double
+    val wholesalePrice: Double,
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0L
 )

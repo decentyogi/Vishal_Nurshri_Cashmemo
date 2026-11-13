@@ -76,7 +76,8 @@ data class PlantRateDto(
     @SerializedName("name") val name: String = "",
     @SerializedName("category") val category: String = "Plants",
     @SerializedName("retailPrice") val retailPrice: Double = 0.0,
-    @SerializedName("wholesalePrice") val wholesalePrice: Double = 0.0
+    @SerializedName("wholesalePrice") val wholesalePrice: Double = 0.0,
+    @SerializedName("updatedAt") val updatedAt: Long = 0L
 )
 
 data class PaymentRequestDto(

@@ -9,7 +9,6 @@ import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoCalculationResult
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
-import com.vishalnursery.cashmemo.domain.model.OcrScriptMode
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 
 enum class AppDestination(val label: String) {
@@ -19,6 +18,11 @@ enum class AppDestination(val label: String) {
     LEDGER("Ledger"),
     SETTINGS("Settings")
 }
+
+data class RateLink(
+    val plantRateId: String,
+    val customRate: Boolean = false
+)
 
 data class EditorUiState(
     val editingMemoId: String? = null,
@@ -38,6 +42,7 @@ data class EditorUiState(
     val paymentStatusNote: String = "Carry Forward",
     val notes: String = "",
     val isWholesaleMode: Boolean = false,
+    val rateLinks: Map<String, RateLink> = emptyMap(),
     val rawOcrText: String = "",
     val sourceImageUri: String = "",
     val createdAt: Long = System.currentTimeMillis()
@@ -57,7 +62,6 @@ data class EditorUiState(
 data class ScannerUiState(
     val isProcessingOcr: Boolean = false,
     val processingLabel: String = "Analyzing with Gemini AI...",
-    val ocrScriptMode: OcrScriptMode = OcrScriptMode.HINDI_AND_ENGLISH,
     val lastImageUri: String = "",
     val extractedRawText: String = "",
     val pendingAiReview: AiScanPreview? = null,
@@ -65,7 +69,28 @@ data class ScannerUiState(
     val pendingUriForKeySetup: String = "",
     val availableFlashModels: List<String> = emptyList(),
     val isDetectingModels: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val isAiPasteOpen: Boolean = false,
+    val aiPasteText: String = "",
+    val aiPasteImageUri: String? = null
+)
+
+data class SyncDryRunResult(
+    val title: String,
+    val description: String = "",
+    val billsToAdd: Int = 0,
+    val billsToUpdate: Int = 0,
+    val billsToSkipDuplicates: Int = 0,
+    val customersToAdd: Int = 0,
+    val customersToUpdate: Int = 0,
+    val ratesToAdd: Int = 0,
+    val ratesToUpdate: Int = 0,
+    val billsToDelete: Int = 0,
+    val customersToDelete: Int = 0,
+    val ratesToDelete: Int = 0,
+    val isDeliberateReplace: Boolean = false,
+    val isAppliedResult: Boolean = false,
+    val onApply: (suspend () -> Unit)? = null
 )
 
 data class CashmemoUiState(
@@ -81,7 +106,10 @@ data class CashmemoUiState(
     val dashboardStats: DashboardStats = DashboardStats(),
     val customers: List<CustomerProfile> = emptyList(),
     val plantRates: List<PlantRate> = emptyList(),
-    val isSyncing: Boolean = false
+    val isSyncing: Boolean = false,
+    val syncProgressText: String? = null,
+    val lastSyncStatus: String = "Never synced",
+    val dryRunPreview: SyncDryRunResult? = null
 )
 
 sealed interface UiEvent {

@@ -5,8 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.vishalnursery.cashmemo.data.ocr.GeminiVisionService
-import com.vishalnursery.cashmemo.data.ocr.OcrScannerService
 import com.vishalnursery.cashmemo.data.repository.CashmemoRepository
+import com.vishalnursery.cashmemo.data.repository.PlantRateImportPolicy
+import com.vishalnursery.cashmemo.data.repository.SyncMode
+import com.vishalnursery.cashmemo.data.repository.SyncScopes
 import com.vishalnursery.cashmemo.domain.model.AiExtractedItem
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
@@ -17,12 +19,12 @@ import com.vishalnursery.cashmemo.domain.model.DashboardStats
 import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
-import com.vishalnursery.cashmemo.domain.model.OcrScriptMode
 import com.vishalnursery.cashmemo.domain.model.PlantRate
+import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.domain.model.round2
+import com.vishalnursery.cashmemo.domain.util.AiTextParser
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
-import com.vishalnursery.cashmemo.domain.util.ReceiptParser
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -32,10 +34,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class CashmemoViewModel(
     private val repository: CashmemoRepository,
-    private val ocrService: OcrScannerService,
     private val geminiService: GeminiVisionService
 ) : ViewModel() {
 
@@ -62,11 +67,11 @@ class CashmemoViewModel(
                 repository.customersFlow,
                 repository.plantRatesFlow,
                 repository.settingsFlow,
-                combine(searchQueryFlow, selectedHistoryDateFlow, historyFilterFlow) { q, d, f ->
-                    Triple(q, d, f)
-                }
-            ) { memos, customers, rates, settings, filterTriple ->
-                val (query, selectedDate, filter) = filterTriple
+                repository.settingsFlow.combine(searchQueryFlow) { s, q -> s to q }
+            ) { memos, customers, rates, settings, _ ->
+                val query = searchQueryFlow.value
+                val selectedDate = selectedHistoryDateFlow.value
+                val filter = historyFilterFlow.value
                 val filtered = filterMemos(memos, query, selectedDate, filter)
                 val stats = DashboardStats(
                     totalMemos = memos.size,
@@ -103,6 +108,13 @@ class CashmemoViewModel(
                 }
             }
         }
+
+        // Also observe last sync status
+        viewModelScope.launch {
+            repository.settingsFlow.collect {
+                // Keep settings in sync
+            }
+        }
     }
 
     fun navigateTo(destination: AppDestination) {
@@ -111,8 +123,12 @@ class CashmemoViewModel(
 
     // --- Scanner, Gemini AI Vision & Quick-Edit Actions ---
 
-    fun setOcrScriptMode(mode: OcrScriptMode) {
-        _uiState.update { it.copy(scanner = it.scanner.copy(ocrScriptMode = mode)) }
+    fun setScanEngine(engine: ScanEngine) {
+        val current = _uiState.value.settings
+        if (current.scanEngine == engine) return
+        viewModelScope.launch {
+            repository.saveSettings(current.copy(scanEngine = engine))
+        }
     }
 
     fun setTranslationMode(mode: TranslationMode) {
@@ -193,6 +209,10 @@ class CashmemoViewModel(
 
     fun processImageForOcr(uri: Uri) {
         val settings = _uiState.value.settings
+        if (settings.scanEngine == ScanEngine.OTHER_AI) {
+            openAiPaste(uri.toString())
+            return
+        }
         if (settings.geminiApiKey.isBlank()) {
             _uiState.update {
                 it.copy(
@@ -207,86 +227,6 @@ class CashmemoViewModel(
             return
         }
         runGeminiScan(uri, settings)
-    }
-
-    fun runOfflineMlKitFallback(uri: Uri) {
-        val scriptMode = _uiState.value.scanner.ocrScriptMode
-        _uiState.update {
-            it.copy(
-                scanner = it.scanner.copy(
-                    isProcessingOcr = true,
-                    processingLabel = "Running Offline ML Kit OCR...",
-                    showApiKeyPrompt = false,
-                    pendingUriForKeySetup = "",
-                    lastImageUri = uri.toString(),
-                    errorMessage = null
-                )
-            )
-        }
-
-        viewModelScope.launch {
-            ocrService.recognizeTextFromUri(uri, scriptMode)
-                .onSuccess { text ->
-                    if (text.isBlank()) {
-                        _uiState.update {
-                            it.copy(
-                                scanner = it.scanner.copy(
-                                    isProcessingOcr = false,
-                                    extractedRawText = "",
-                                    errorMessage = "No readable text detected offline. Use Gemini AI for handwritten notes."
-                                )
-                            )
-                        }
-                    } else {
-                        val settings = _uiState.value.settings
-                        val extracted = ReceiptParser.parse(text)
-                        val draft = ReceiptParser.toDraftMemo(
-                            extracted = extracted,
-                            defaultMemoNumber = settings.nextMemoNumber.toString(),
-                            sourceImageUri = uri.toString()
-                        )
-                        val preview = AiScanPreview(
-                            memoNumber = draft.memoNumber,
-                            date = draft.date,
-                            customerName = draft.customerName,
-                            customerMobile = draft.customerMobile,
-                            customerAddress = draft.customerAddress,
-                            items = draft.items.map {
-                                AiExtractedItem(
-                                    originalText = it.description,
-                                    translatedName = it.description,
-                                    quantity = formatEditableNumber(it.quantity),
-                                    rate = formatEditableNumber(it.rate)
-                                )
-                            },
-                            rawTranscription = text,
-                            warnings = "Offline ML Kit used. Verify handwriting carefully.",
-                            modelUsed = "ML Kit Offline",
-                            sourceImageUri = uri.toString()
-                        )
-                        _uiState.update {
-                            it.copy(
-                                scanner = it.scanner.copy(
-                                    isProcessingOcr = false,
-                                    extractedRawText = text,
-                                    pendingAiReview = preview,
-                                    errorMessage = null
-                                )
-                            )
-                        }
-                    }
-                }
-                .onFailure { err ->
-                    _uiState.update {
-                        it.copy(
-                            scanner = it.scanner.copy(
-                                isProcessingOcr = false,
-                                errorMessage = err.localizedMessage ?: "Offline OCR failed"
-                            )
-                        )
-                    }
-                }
-        }
     }
 
     private fun runGeminiScan(uri: Uri, settings: BusinessSettings) {
@@ -308,6 +248,20 @@ class CashmemoViewModel(
                 preferredModel = settings.geminiModel,
                 translationMode = settings.translationMode
             ).onSuccess { preview ->
+                // Treat "Gemini succeeded but found no usable items" as failure
+                val hasUsableItems = preview.items.any { it.translatedName.isNotBlank() || it.originalText.isNotBlank() }
+                if (!hasUsableItems) {
+                    _uiState.update {
+                        it.copy(
+                            scanner = it.scanner.copy(
+                                isProcessingOcr = false,
+                                errorMessage = "Gemini couldn't find any items in this image."
+                            )
+                        )
+                    }
+                    return@launch
+                }
+
                 _uiState.update {
                     it.copy(
                         scanner = it.scanner.copy(
@@ -320,15 +274,66 @@ class CashmemoViewModel(
                 }
                 _events.emit(UiEvent.ShowMessage("AI extracted ${preview.items.size} item(s). Review & confirm!"))
             }.onFailure { err ->
+                val errorMsg = mapGeminiError(err)
                 _uiState.update {
                     it.copy(
                         scanner = it.scanner.copy(
                             isProcessingOcr = false,
-                            errorMessage = err.localizedMessage ?: "Gemini scan failed"
+                            errorMessage = errorMsg
                         )
                     )
                 }
             }
+        }
+    }
+
+    private fun mapGeminiError(err: Throwable): String {
+        return when {
+            err is java.net.UnknownHostException || err is java.io.IOException ->
+                "No internet - couldn't reach Gemini."
+            err.message?.contains("429") == true || err.message?.contains("limit", ignoreCase = true) == true || err.message?.contains("quota", ignoreCase = true) == true ->
+                "Gemini free-tier limit reached. Try later or use another AI."
+            err.message?.contains("400") == true || err.message?.contains("403") == true || err.message?.contains("API key", ignoreCase = true) == true ->
+                "Gemini rejected the API key."
+            err.message?.contains("404") == true || err.message?.contains("not found", ignoreCase = true) == true ->
+                "Gemini model not found."
+            else -> err.localizedMessage ?: "Gemini scan failed"
+        }
+    }
+
+    fun openAiPaste(imageUri: String? = null) {
+        _uiState.update {
+            val uriToUse = imageUri ?: it.scanner.lastImageUri.takeIf { u -> u.isNotBlank() }
+            it.copy(
+                scanner = it.scanner.copy(
+                    isAiPasteOpen = true,
+                    aiPasteImageUri = uriToUse,
+                    errorMessage = null,
+                    showApiKeyPrompt = false
+                )
+            )
+        }
+    }
+
+    fun closeAiPaste() {
+        _uiState.update { it.copy(scanner = it.scanner.copy(isAiPasteOpen = false)) }
+    }
+
+    fun updateAiPasteText(text: String) {
+        _uiState.update { it.copy(scanner = it.scanner.copy(aiPasteText = text)) }
+    }
+
+    fun submitAiPaste() {
+        val state = _uiState.value.scanner
+        val preview = AiTextParser.parseMemoText(state.aiPasteText, state.aiPasteImageUri)
+        applyAiReviewToEditor(preview)
+        _uiState.update {
+            it.copy(
+                scanner = it.scanner.copy(
+                    isAiPasteOpen = false,
+                    aiPasteText = ""
+                )
+            )
         }
     }
 
@@ -375,23 +380,25 @@ class CashmemoViewModel(
                     paidAmountText = edited.paidAmount,
                     hasCustomPayment = hasPaid,
                     rawOcrText = edited.rawTranscription,
-                    sourceImageUri = edited.sourceImageUri
+                    sourceImageUri = edited.sourceImageUri,
+                    rateLinks = emptyMap()
                 )
             )
-        }
-        viewModelScope.launch {
-            _events.emit(UiEvent.ShowMessage("Pasted ${memoItems.size} item(s) into Cash Memo. Edit & Save!"))
         }
     }
 
     fun openReviewFromLastScan() {
-        val pending = _uiState.value.scanner.pendingAiReview
-        if (pending != null) {
-            applyAiReviewToEditor(pending)
-        } else {
-            navigateTo(AppDestination.EDITOR)
+        val scanner = _uiState.value.scanner
+        if (scanner.lastImageUri.isBlank() && scanner.extractedRawText.isBlank()) {
+            viewModelScope.launch {
+                _events.emit(UiEvent.ShowMessage("No scanned memo yet. Take a photo first!"))
+            }
+            return
         }
+        navigateTo(AppDestination.EDITOR)
     }
+
+    // --- Review Editor Actions ---
 
     fun startNewBlankMemo() {
         val settings = _uiState.value.settings
@@ -399,16 +406,17 @@ class CashmemoViewModel(
             it.copy(
                 activeDestination = AppDestination.EDITOR,
                 editor = EditorUiState(
+                    editingMemoId = null,
                     memoNumber = settings.nextMemoNumber.toString(),
+                    date = CashMemo.todayFormatted(),
                     taxPercentageText = if (settings.enableTax && settings.defaultTaxPercentage > 0) {
                         formatEditableNumber(settings.defaultTaxPercentage)
-                    } else ""
+                    } else "",
+                    rateLinks = emptyMap()
                 )
             )
         }
     }
-
-    // --- Editor Actions (Unidirectional Data Flow) ---
 
     fun updateMemoNumber(value: String) = updateEditor { it.copy(memoNumber = value) }
     fun updateDate(value: String) = updateEditor { it.copy(date = value) }
@@ -422,14 +430,71 @@ class CashmemoViewModel(
                 customerName = customer.name,
                 customerMobile = customer.phoneNumber,
                 customerAddress = customer.address,
-                previousDuesText = if (customer.outstandingBalance > 0.009) {
-                    formatEditableNumber(customer.outstandingBalance)
-                } else ""
+                previousDuesText = if (customer.outstandingBalance > 0.0) formatEditableNumber(customer.outstandingBalance) else it.previousDuesText
             )
         }
     }
 
-    fun toggleWholesaleMode(enabled: Boolean) = updateEditor { it.copy(isWholesaleMode = enabled) }
+    fun toggleWholesaleMode(enabled: Boolean) {
+        updateEditor { state ->
+            val rates = _uiState.value.plantRates
+            var switchedCount = 0
+            var customCount = 0
+
+            val updatedItems = state.items.map { item ->
+                val link = state.rateLinks[item.id]
+                if (link != null) {
+                    if (link.customRate) {
+                        customCount++
+                        item
+                    } else {
+                        val plant = rates.firstOrNull { it.id == link.plantRateId }
+                        if (plant != null) {
+                            switchedCount++
+                            val newPrice = if (enabled) {
+                                if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
+                            } else plant.retailPrice
+                            item.copy(rate = newPrice)
+                        } else item
+                    }
+                } else {
+                    // Check unlinked item matching description
+                    val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
+                    if (plant != null && (item.rate == plant.retailPrice || (plant.wholesalePrice > 0.0 && item.rate == plant.wholesalePrice))) {
+                        switchedCount++
+                        val newPrice = if (enabled) {
+                            if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
+                        } else plant.retailPrice
+                        item.copy(rate = newPrice)
+                    } else {
+                        item
+                    }
+                }
+            }
+
+            val updatedLinks = state.rateLinks.toMutableMap()
+            for (item in updatedItems) {
+                if (!updatedLinks.containsKey(item.id)) {
+                    val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
+                    if (plant != null) {
+                        updatedLinks[item.id] = RateLink(plantRateId = plant.id, customRate = false)
+                    }
+                }
+            }
+
+            viewModelScope.launch {
+                val modeName = if (enabled) "Wholesale" else "Retail"
+                val msg = if (customCount > 0) {
+                    "Switched $switchedCount items to $modeName - $customCount custom price kept"
+                } else {
+                    "Switched $switchedCount items to $modeName"
+                }
+                _events.emit(UiEvent.ShowMessage(msg))
+            }
+
+            state.copy(isWholesaleMode = enabled, items = updatedItems, rateLinks = updatedLinks)
+        }
+    }
 
     fun addItemRow() {
         updateEditor { state ->
@@ -444,24 +509,46 @@ class CashmemoViewModel(
             val cloned = source.copy(id = MemoItem().id)
             val mutable = state.items.toMutableList()
             mutable.add(index + 1, cloned)
-            state.copy(items = mutable.mapIndexed { idx, item -> item.copy(serialNo = idx + 1) })
+            val updatedLinks = state.rateLinks.toMutableMap()
+            state.rateLinks[source.id]?.let { link ->
+                updatedLinks[cloned.id] = link.copy()
+            }
+            state.copy(
+                items = mutable.mapIndexed { idx, item -> item.copy(serialNo = idx + 1) },
+                rateLinks = updatedLinks
+            )
         }
     }
 
     fun removeItemRow(index: Int) {
         updateEditor { state ->
+            val item = state.items.getOrNull(index)
+            val updatedLinks = if (item != null) state.rateLinks - item.id else state.rateLinks
             if (state.items.size <= 1) {
-                state.copy(items = listOf(MemoItem(serialNo = 1)))
+                state.copy(items = listOf(MemoItem(serialNo = 1)), rateLinks = emptyMap())
             } else {
                 val filtered = state.items.filterIndexed { i, _ -> i != index }
-                    .mapIndexed { idx, item -> item.copy(serialNo = idx + 1) }
-                state.copy(items = filtered)
+                    .mapIndexed { idx, itm -> itm.copy(serialNo = idx + 1) }
+                state.copy(items = filtered, rateLinks = updatedLinks)
             }
         }
     }
 
     fun updateItemDescription(index: Int, desc: String) {
-        updateItemAt(index) { it.copy(description = desc) }
+        updateEditor { state ->
+            val item = state.items.getOrNull(index) ?: return@updateEditor state
+            val link = state.rateLinks[item.id]
+            val rates = _uiState.value.plantRates
+            val plant = if (link != null) rates.firstOrNull { it.id == link.plantRateId } else null
+            val updatedLinks = if (plant != null && !plant.name.trim().equals(desc.trim(), ignoreCase = true)) {
+                state.rateLinks - item.id
+            } else {
+                state.rateLinks
+            }
+            val updatedItem = item.copy(description = desc)
+            val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
+            state.copy(items = updatedItems, rateLinks = updatedLinks)
+        }
     }
 
     fun updateItemQuantity(index: Int, qtyText: String) {
@@ -471,12 +558,55 @@ class CashmemoViewModel(
 
     fun updateItemRate(index: Int, rateText: String) {
         val rate = rateText.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
-        updateItemAt(index) { it.copy(rate = rate) }
+        updateEditor { state ->
+            val item = state.items.getOrNull(index) ?: return@updateEditor state
+            val link = state.rateLinks[item.id]
+            val rates = _uiState.value.plantRates
+            val plant = if (link != null) rates.firstOrNull { it.id == link.plantRateId }
+                        else rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
+            val tierPrice = if (plant != null) (if (state.isWholesaleMode) plant.wholesalePrice else plant.retailPrice) else null
+            val isCustom = tierPrice != null && rate != tierPrice
+
+            val updatedItem = item.copy(rate = rate)
+            val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
+            val updatedLinks = state.rateLinks.toMutableMap()
+            if (plant != null) {
+                updatedLinks[item.id] = RateLink(plantRateId = plant.id, customRate = isCustom)
+            }
+            state.copy(items = updatedItems, rateLinks = updatedLinks)
+        }
+    }
+
+    fun resetItemToSavedRate(index: Int) {
+        updateEditor { state ->
+            val item = state.items.getOrNull(index) ?: return@updateEditor state
+            val link = state.rateLinks[item.id]
+            val rates = _uiState.value.plantRates
+            val plant = if (link != null) rates.firstOrNull { it.id == link.plantRateId }
+                        else rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
+            if (plant != null) {
+                val tierPrice = if (state.isWholesaleMode) {
+                    if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
+                } else plant.retailPrice
+                val updatedItem = item.copy(rate = tierPrice)
+                val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
+                val updatedLinks = state.rateLinks + (item.id to RateLink(plantRateId = plant.id, customRate = false))
+                state.copy(items = updatedItems, rateLinks = updatedLinks)
+            } else state
+        }
     }
 
     fun applyPlantRateSuggestion(index: Int, rateItem: PlantRate) {
-        val price = if (_uiState.value.editor.isWholesaleMode) rateItem.wholesalePrice else rateItem.retailPrice
-        updateItemAt(index) { it.copy(description = rateItem.name, rate = price) }
+        val price = if (_uiState.value.editor.isWholesaleMode) {
+            if (rateItem.wholesalePrice > 0.0) rateItem.wholesalePrice else rateItem.retailPrice
+        } else rateItem.retailPrice
+        updateEditor { state ->
+            val item = state.items.getOrNull(index) ?: return@updateEditor state
+            val updatedItem = item.copy(description = rateItem.name, rate = price)
+            val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
+            val updatedLinks = state.rateLinks + (updatedItem.id to RateLink(plantRateId = rateItem.id, customRate = false))
+            state.copy(items = updatedItems, rateLinks = updatedLinks)
+        }
     }
 
     fun updateDiscount(value: String) = updateEditor { it.copy(discountText = value) }
@@ -504,40 +634,25 @@ class CashmemoViewModel(
         }
     }
 
-    fun shareCurrentEditorAsJpeg() {
-        val memo = buildCashMemoFromEditor() ?: return
-        viewModelScope.launch {
-            _events.emit(UiEvent.ShareMemoImages(memo, _uiState.value.settings))
-        }
-    }
-
-    fun shareCurrentEditorAsPdf() {
-        val memo = buildCashMemoFromEditor() ?: return
-        viewModelScope.launch {
-            _events.emit(UiEvent.ShareMemoPdf(memo, _uiState.value.settings))
-        }
-    }
-
-    private fun buildCashMemoFromEditor(): CashMemo? {
+    fun saveCurrentMemo() {
         val editor = _uiState.value.editor
-        val validItems = editor.items.filter { it.description.isNotBlank() || it.amount > 0.0 }
-        if (validItems.isEmpty()) {
-            viewModelScope.launch {
-                _events.emit(UiEvent.ShowMessage("Add at least one item before saving or sharing."))
-            }
-            return null
-        }
-
         val calc = editor.calculation
-        return CashMemo(
+        val settings = _uiState.value.settings
+
+        val validItems = editor.items
+            .filter { it.description.isNotBlank() || it.rate > 0.0 }
+            .ifEmpty { listOf(MemoItem(serialNo = 1, description = "Plant Item", quantity = 1.0, rate = calc.subtotal)) }
+            .mapIndexed { idx, item -> item.copy(serialNo = idx + 1) }
+
+        val memo = CashMemo(
             id = editor.editingMemoId ?: CashMemo.newMemoId(),
-            memoNumber = editor.memoNumber.ifBlank { _uiState.value.settings.nextMemoNumber.toString() },
+            memoNumber = editor.memoNumber.ifBlank { settings.nextMemoNumber.toString() },
             date = editor.date.ifBlank { CashMemo.todayFormatted() },
             customerName = editor.customerName.trim(),
             customerMobile = editor.customerMobile.trim(),
             customerAddress = editor.customerAddress.trim(),
-            items = validItems.mapIndexed { idx, item -> item.copy(serialNo = idx + 1) },
-            discount = editor.discountText.toDoubleOrNull() ?: 0.0,
+            items = validItems,
+            discount = editor.discountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
             discountType = editor.discountType,
             taxPercentage = calc.taxRate,
             taxAmount = calc.taxAmount,
@@ -547,81 +662,150 @@ class CashmemoViewModel(
             paidAmount = calc.effectivePaid,
             balanceDue = calc.balanceDue,
             paymentMethod = editor.paymentMethod,
-            paymentStatusNote = if (calc.balanceDue > 0.009) {
-                editor.paymentStatusNote.ifBlank { "Carry Forward" }
-            } else "Fully Paid",
-            notes = editor.notes.trim(),
+            paymentStatusNote = if (calc.balanceDue > 0.009) editor.paymentStatusNote.ifBlank { "Carry Forward" } else "Fully Paid",
+            notes = editor.notes,
             rawOcrText = editor.rawOcrText,
             sourceImageUri = editor.sourceImageUri,
-            createdAt = editor.createdAt
+            createdAt = editor.createdAt,
+            updatedAt = System.currentTimeMillis()
         )
-    }
-
-    fun saveCurrentMemo(printAfterSave: Boolean = false) {
-        val memoToSave = buildCashMemoFromEditor() ?: return
 
         viewModelScope.launch {
-            repository.saveMemo(memoToSave)
+            repository.saveMemo(memo)
                 .onSuccess { saved ->
-                    updateEditor { it.copy(editingMemoId = saved.id) }
-                    val msg = if (saved.isSynced) {
-                        "Memo #${saved.memoNumber} saved & synced!"
-                    } else {
-                        "Memo #${saved.memoNumber} saved offline!"
-                    }
-                    _events.emit(UiEvent.ShowMessage(msg))
-                    if (printAfterSave) {
-                        _events.emit(UiEvent.TriggerPrint(saved, _uiState.value.settings))
+                    _events.emit(UiEvent.ShowMessage("Memo #${saved.memoNumber} saved successfully"))
+                    _uiState.update {
+                        it.copy(
+                            activeDestination = AppDestination.HISTORY,
+                            editor = EditorUiState(
+                                editingMemoId = null,
+                                memoNumber = settings.nextMemoNumber.toString(),
+                                date = CashMemo.todayFormatted(),
+                                rateLinks = emptyMap()
+                            )
+                        )
                     }
                 }
                 .onFailure { err ->
-                    _events.emit(UiEvent.ShowMessage("Save failed: ${err.localizedMessage}"))
+                    _events.emit(UiEvent.ShowMessage("Failed to save memo: ${err.localizedMessage}"))
                 }
         }
     }
 
-    // --- History & Export Actions ---
+    private fun buildTransientMemoForExport(): CashMemo {
+        val editor = _uiState.value.editor
+        val calc = editor.calculation
+        val settings = _uiState.value.settings
+
+        val validItems = editor.items
+            .filter { it.description.isNotBlank() || it.rate > 0.0 }
+            .ifEmpty { listOf(MemoItem(serialNo = 1, description = "Plant Item", quantity = 1.0, rate = calc.subtotal)) }
+            .mapIndexed { idx, item -> item.copy(serialNo = idx + 1) }
+
+        return CashMemo(
+            id = editor.editingMemoId ?: CashMemo.newMemoId(),
+            memoNumber = editor.memoNumber.ifBlank { settings.nextMemoNumber.toString() },
+            date = editor.date.ifBlank { CashMemo.todayFormatted() },
+            customerName = editor.customerName.trim(),
+            customerMobile = editor.customerMobile.trim(),
+            customerAddress = editor.customerAddress.trim(),
+            items = validItems,
+            discount = editor.discountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
+            discountType = editor.discountType,
+            taxPercentage = calc.taxRate,
+            taxAmount = calc.taxAmount,
+            previousDues = calc.previousDues,
+            subtotal = calc.subtotal,
+            grandTotal = calc.grandTotal,
+            paidAmount = calc.effectivePaid,
+            balanceDue = calc.balanceDue,
+            paymentMethod = editor.paymentMethod,
+            paymentStatusNote = if (calc.balanceDue > 0.009) editor.paymentStatusNote.ifBlank { "Carry Forward" } else "Fully Paid",
+            notes = editor.notes,
+            rawOcrText = editor.rawOcrText,
+            sourceImageUri = editor.sourceImageUri,
+            createdAt = editor.createdAt,
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    fun shareCurrentEditorAsJpeg() {
+        val memo = buildTransientMemoForExport()
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShareMemoImages(memo, _uiState.value.settings))
+        }
+    }
+
+    fun shareCurrentEditorAsPdf() {
+        val memo = buildTransientMemoForExport()
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShareMemoPdf(memo, _uiState.value.settings))
+        }
+    }
+
+    fun savePermanentUpiConfig(vpa: String, note: String) {
+        val current = _uiState.value.settings
+        viewModelScope.launch {
+            repository.saveSettings(
+                current.copy(
+                    upiVpa = vpa.trim(),
+                    upiDefaultNote = note.trim()
+                )
+            ).onSuccess {
+                _events.emit(UiEvent.ShowMessage("Store UPI QR configuration saved permanently"))
+            }.onFailure { err ->
+                _events.emit(UiEvent.ShowMessage("Could not save QR: ${err.localizedMessage}"))
+            }
+        }
+    }
+
+    // --- History & Ledger Actions ---
 
     fun updateSearchQuery(query: String) {
         searchQueryFlow.value = query
+        _uiState.update { it.copy(searchQuery = query) }
     }
 
     fun updateSelectedHistoryDate(date: String) {
-        selectedHistoryDateFlow.value = date.trim()
+        selectedHistoryDateFlow.value = date
+        _uiState.update { it.copy(selectedHistoryDate = date) }
     }
 
     fun updateHistoryFilter(filter: MemoFilter) {
         historyFilterFlow.value = filter
+        _uiState.update { it.copy(historyFilter = filter) }
     }
 
-    fun createNewBillForCustomer(customer: CustomerProfile) {
-        val settings = _uiState.value.settings
-        val taxDefault = if (settings.enableTax && settings.defaultTaxPercentage > 0) {
-            formatEditableNumber(settings.defaultTaxPercentage)
-        } else ""
-        val prevDues = if (customer.outstandingBalance > 0.009) {
-            formatEditableNumber(customer.outstandingBalance)
-        } else ""
+    fun editMemo(memo: CashMemo) {
         _uiState.update {
             it.copy(
                 activeDestination = AppDestination.EDITOR,
-                editor = EditorUiState(
-                    memoNumber = settings.nextMemoNumber.toString(),
-                    date = CashMemo.todayFormatted(),
-                    customerName = customer.name,
-                    customerMobile = customer.phoneNumber,
-                    customerAddress = customer.address,
-                    items = listOf(MemoItem(serialNo = 1)),
-                    taxPercentageText = taxDefault,
-                    previousDuesText = prevDues
-                )
+                editor = memo.toEditorState(isNewDraft = false)
             )
         }
+    }
+
+    fun duplicateMemo(memo: CashMemo) {
+        val nextNum = _uiState.value.settings.nextMemoNumber.toString()
+        _uiState.update {
+            it.copy(
+                activeDestination = AppDestination.EDITOR,
+                editor = memo.toEditorState(isNewDraft = true).copy(memoNumber = nextNum)
+            )
+        }
+    }
+
+    fun deleteMemo(id: String) {
         viewModelScope.launch {
-            val dueMsg = if (customer.outstandingBalance > 0.009) {
-                " with ₹${formatEditableNumber(customer.outstandingBalance)} carry-forward due"
-            } else ""
-            _events.emit(UiEvent.ShowMessage("New bill started for ${customer.name}$dueMsg"))
+            repository.deleteMemo(id)
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Memo deleted")) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Delete failed: ${err.localizedMessage}")) }
+        }
+    }
+
+    fun printMemo(memo: CashMemo) {
+        viewModelScope.launch {
+            _events.emit(UiEvent.TriggerPrint(memo, _uiState.value.settings))
         }
     }
 
@@ -637,96 +821,53 @@ class CashmemoViewModel(
         }
     }
 
-    fun savePermanentUpiConfig(upiVpa: String, payeeName: String, defaultNote: String) {
-        val current = _uiState.value.settings
-        val updated = current.copy(
-            upiVpa = upiVpa.trim(),
-            shopNameEnglish = payeeName.trim().ifBlank { current.shopNameEnglish },
-            upiDefaultNote = defaultNote.trim()
-        )
-        viewModelScope.launch {
-            repository.saveSettings(updated)
-            _events.emit(UiEvent.ShowMessage("Saved permanent Store UPI QR settings"))
-        }
-    }
-
-    fun editMemo(memo: CashMemo) {
-        _uiState.update {
-            it.copy(
-                activeDestination = AppDestination.EDITOR,
-                editor = memo.toEditorState(isNewDraft = false)
-            )
-        }
-    }
-
-    fun duplicateMemo(memo: CashMemo) {
-        val nextNum = _uiState.value.settings.nextMemoNumber.toString()
-        val duplicated = memo.copy(
-            id = CashMemo.newMemoId(),
-            memoNumber = nextNum,
-            date = CashMemo.todayFormatted(),
-            createdAt = System.currentTimeMillis()
-        )
-        _uiState.update {
-            it.copy(
-                activeDestination = AppDestination.EDITOR,
-                editor = duplicated.toEditorState(isNewDraft = true)
-            )
-        }
-        viewModelScope.launch {
-            _events.emit(UiEvent.ShowMessage("Duplicated as Memo #$nextNum"))
-        }
-    }
-
-    fun deleteMemo(id: String) {
-        viewModelScope.launch {
-            repository.deleteMemo(id)
-            _events.emit(UiEvent.ShowMessage("Cash memo deleted"))
-        }
-    }
-
-    fun printMemo(memo: CashMemo) {
-        viewModelScope.launch {
-            _events.emit(UiEvent.TriggerPrint(memo, _uiState.value.settings))
-        }
-    }
-
     fun shareMemoSummary(memo: CashMemo) {
         val settings = _uiState.value.settings
-        val summary = buildString {
-            appendLine("${settings.shopNameEnglish} (${settings.shopNameHindi})")
-            appendLine("Cash Memo #${memo.memoNumber} | Date: ${memo.date}")
-            if (memo.customerName.isNotBlank()) appendLine("Customer: ${memo.customerName}")
-            if (memo.customerMobile.isNotBlank()) appendLine("Mobile: ${memo.customerMobile}")
-            appendLine("--------------------------------")
-            memo.items.forEachIndexed { idx, item ->
-                appendLine("${idx + 1}. ${item.description} (${item.quantity} x ${item.rate}) = ${IndianCurrencyFormatter.formatInr(item.amount)}")
-            }
-            appendLine("--------------------------------")
-            appendLine("Grand Total: ${IndianCurrencyFormatter.formatInr(memo.grandTotal)}")
-            if (memo.previousDues > 0) appendLine("Previous Dues: ${IndianCurrencyFormatter.formatInr(memo.previousDues)}")
-            appendLine("Paid (${memo.paymentMethod}): ${IndianCurrencyFormatter.formatInr(memo.paidAmount)}")
-            if (memo.hasPendingDue) {
-                appendLine("Carry Forward: ${IndianCurrencyFormatter.formatInr(memo.balanceDue)}")
-            }
-            appendLine(settings.termsNote)
-        }
+        val summary = IndianCurrencyFormatter.buildBillShareText(memo, settings)
         viewModelScope.launch {
-            _events.emit(UiEvent.ShareFile("Memo_${memo.memoNumber}.txt", "text/plain", summary))
+            _events.emit(
+                UiEvent.ShareFile(
+                    fileName = "Cashmemo_${memo.memoNumber}.txt",
+                    mimeType = "text/plain",
+                    content = summary
+                )
+            )
         }
     }
 
     fun exportCsvReport() {
         viewModelScope.launch {
-            val csv = repository.exportMemosCsv()
-            _events.emit(UiEvent.ShareFile("VishalNursery_Memos.csv", "text/csv", csv))
+            runCatching {
+                val csv = repository.exportMemosCsv()
+                val dateStr = SimpleDateFormat("ddMMyyyy_HHmm", Locale.US).format(Date())
+                _events.emit(
+                    UiEvent.ShareFile(
+                        fileName = "Vishal_Nursery_Sales_$dateStr.csv",
+                        mimeType = "text/csv",
+                        content = csv
+                    )
+                )
+            }.onFailure { err ->
+                _events.emit(UiEvent.ShowMessage("CSV export failed: ${err.localizedMessage}"))
+            }
         }
     }
 
     fun exportJsonBackup() {
         viewModelScope.launch {
-            val json = repository.exportBackupJson()
-            _events.emit(UiEvent.ShareFile("VishalNursery_Backup_v6.json", "application/json", json))
+            runCatching {
+                val json = repository.exportBackupJson()
+                val dateStr = SimpleDateFormat("ddMMyyyy_HHmm", Locale.US).format(Date())
+                _events.emit(
+                    UiEvent.ShareFile(
+                        fileName = "Vishal_Nursery_Backup_$dateStr.json",
+                        mimeType = "application/json",
+                        content = json
+                    )
+                )
+            }.onFailure { err ->
+                _events.emit(UiEvent.ShowMessage("Backup failed: ${err.localizedMessage}"))
+            }
         }
     }
 
@@ -738,19 +879,37 @@ class CashmemoViewModel(
         }
     }
 
-    // --- Customers & Plant Rates ---
+    fun createNewBillForCustomer(customer: CustomerProfile) {
+        val settings = _uiState.value.settings
+        _uiState.update {
+            it.copy(
+                activeDestination = AppDestination.EDITOR,
+                editor = EditorUiState(
+                    editingMemoId = null,
+                    memoNumber = settings.nextMemoNumber.toString(),
+                    date = CashMemo.todayFormatted(),
+                    customerName = customer.name,
+                    customerMobile = customer.phoneNumber,
+                    customerAddress = customer.address,
+                    previousDuesText = if (customer.outstandingBalance > 0.009) formatEditableNumber(customer.outstandingBalance) else "",
+                    rateLinks = emptyMap()
+                )
+            )
+        }
+    }
 
     fun saveCustomer(customer: CustomerProfile) {
         viewModelScope.launch {
             repository.saveCustomer(customer)
-            _events.emit(UiEvent.ShowMessage("Saved customer ${customer.name}"))
+            _events.emit(UiEvent.ShowMessage("Customer saved: ${customer.name}"))
         }
     }
 
-    fun settleCustomerDue(customerId: String, amount: Double, note: String) {
+    fun settleCustomerDue(customer: CustomerProfile, amount: Double, promiseNote: String) {
         viewModelScope.launch {
-            repository.recordCustomerPayment(customerId, amount, note)
-            _events.emit(UiEvent.ShowMessage("Recorded payment of ${IndianCurrencyFormatter.formatInr(amount)}"))
+            repository.recordCustomerPayment(customer.id, amount, promiseNote)
+                .onSuccess { msg -> _events.emit(UiEvent.ShowMessage(msg)) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Payment failed: ${err.localizedMessage}")) }
         }
     }
 
@@ -769,7 +928,167 @@ class CashmemoViewModel(
         viewModelScope.launch { repository.deletePlantRate(id) }
     }
 
-    // --- Settings & Backend Sync ---
+    fun exportPlantRatesJson() {
+        viewModelScope.launch {
+            runCatching {
+                val json = repository.exportPlantRatesJson()
+                val dateStr = SimpleDateFormat("ddMMyyyy_HHmm", Locale.US).format(Date())
+                _events.emit(
+                    UiEvent.ShareFile(
+                        fileName = "Vishal_Nursery_Rates_$dateStr.json",
+                        mimeType = "application/json",
+                        content = json
+                    )
+                )
+            }.onFailure { err ->
+                _events.emit(UiEvent.ShowMessage("Export failed: ${err.localizedMessage}"))
+            }
+        }
+    }
+
+    fun exportPlantRatesCsv() {
+        viewModelScope.launch {
+            runCatching {
+                val csv = repository.exportPlantRatesCsv()
+                val dateStr = SimpleDateFormat("ddMMyyyy_HHmm", Locale.US).format(Date())
+                _events.emit(
+                    UiEvent.ShareFile(
+                        fileName = "Vishal_Nursery_Rates_$dateStr.csv",
+                        mimeType = "text/csv",
+                        content = csv
+                    )
+                )
+            }.onFailure { err ->
+                _events.emit(UiEvent.ShowMessage("Export failed: ${err.localizedMessage}"))
+            }
+        }
+    }
+
+    fun importPlantRates(
+        rates: List<PlantRate>,
+        policy: PlantRateImportPolicy,
+        onComplete: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            repository.importPlantRates(rates, policy)
+                .onSuccess { summary ->
+                    val msg = "Imported: ${summary.addedCount} added, ${summary.updatedCount} updated, ${summary.unchangedCount} unchanged"
+                    _events.emit(UiEvent.ShowMessage(msg))
+                    onComplete(msg)
+                }
+                .onFailure { err ->
+                    _events.emit(UiEvent.ShowMessage("Import failed: ${err.localizedMessage}"))
+                }
+        }
+    }
+
+    // --- Web Sync Methods (Task D) ---
+
+    fun testConnection(serverUrl: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncing = true, syncProgressText = "Testing connection...") }
+            repository.syncManager.testConnection(serverUrl)
+                .onSuccess { stats ->
+                    _uiState.update { it.copy(isSyncing = false, syncProgressText = null) }
+                    _events.emit(UiEvent.ShowMessage("Connected! Server: ${stats.billsCount} bills, ${stats.customersCount} customers, ${stats.ratesCount} plant rates"))
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(isSyncing = false, syncProgressText = null) }
+                    _events.emit(UiEvent.ShowMessage("Connection failed: ${err.localizedMessage ?: "Server unreachable"}"))
+                }
+        }
+    }
+
+    fun requestSyncDryRun(mode: SyncMode, scopes: SyncScopes) {
+        val serverUrl = _uiState.value.settings.serverBaseUrl
+        if (serverUrl.isBlank()) {
+            viewModelScope.launch { _events.emit(UiEvent.ShowMessage("Enter server URL first")) }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncing = true, syncProgressText = "Analyzing sync preview...") }
+            repository.syncManager.computeDryRun(mode, scopes, serverUrl)
+                .onSuccess { preview ->
+                    _uiState.update {
+                        it.copy(
+                            isSyncing = false,
+                            syncProgressText = null,
+                            dryRunPreview = preview.copy(onApply = {
+                                executeActualSync(mode, scopes, serverUrl)
+                            })
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(isSyncing = false, syncProgressText = null) }
+                    _events.emit(UiEvent.ShowMessage("Preview failed: ${err.localizedMessage}"))
+                }
+        }
+    }
+
+    fun dismissDryRun() {
+        _uiState.update { it.copy(dryRunPreview = null) }
+    }
+
+    fun confirmDryRun() {
+        val preview = _uiState.value.dryRunPreview ?: return
+        val applyAction = preview.onApply ?: return
+        viewModelScope.launch {
+            applyAction()
+        }
+    }
+
+    private fun executeActualSync(mode: SyncMode, scopes: SyncScopes, serverUrl: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncing = true, syncProgressText = "Starting sync...") }
+            repository.syncManager.executeSync(
+                mode = mode,
+                scopes = scopes,
+                serverUrl = serverUrl,
+                onProgress = { step ->
+                    _uiState.update { it.copy(syncProgressText = step) }
+                }
+            ).onSuccess { summary ->
+                _uiState.update {
+                    it.copy(
+                        isSyncing = false,
+                        syncProgressText = null,
+                        lastSyncStatus = summary.message,
+                        dryRunPreview = SyncDryRunResult(
+                            title = "Sync Complete",
+                            description = summary.message,
+                            billsToAdd = summary.pushedCount,
+                            billsToUpdate = summary.pulledCount,
+                            billsToSkipDuplicates = summary.skippedDuplicates,
+                            billsToDelete = summary.deletedCount,
+                            isAppliedResult = true
+                        )
+                    )
+                }
+                _events.emit(UiEvent.ShowMessage(summary.message))
+            }.onFailure { err ->
+                _uiState.update { it.copy(isSyncing = false, syncProgressText = null) }
+                _events.emit(UiEvent.ShowMessage("Sync failed: ${err.localizedMessage}"))
+            }
+        }
+    }
+
+    fun restoreSnapshotFile(file: File) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSyncing = true, syncProgressText = "Restoring snapshot...") }
+            repository.syncManager.restoreSnapshot(file)
+                .onSuccess { msg ->
+                    _uiState.update { it.copy(isSyncing = false, syncProgressText = null) }
+                    _events.emit(UiEvent.ShowMessage(msg))
+                }
+                .onFailure { err ->
+                    _uiState.update { it.copy(isSyncing = false, syncProgressText = null) }
+                    _events.emit(UiEvent.ShowMessage("Restore failed: ${err.localizedMessage}"))
+                }
+        }
+    }
+
+    fun listSafetySnapshots(): List<File> = repository.syncManager.listSnapshots()
 
     fun saveSettings(settings: BusinessSettings) {
         viewModelScope.launch {
@@ -780,13 +1099,15 @@ class CashmemoViewModel(
     }
 
     fun syncNow(urlOverride: String? = null) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isSyncing = true) }
-            repository.syncWithBackend(urlOverride)
-                .onSuccess { msg -> _events.emit(UiEvent.ShowMessage(msg)) }
-                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Sync failed: ${err.localizedMessage}")) }
-            _uiState.update { it.copy(isSyncing = false) }
+        val url = urlOverride ?: _uiState.value.settings.serverBaseUrl
+        if (url.isBlank()) {
+            viewModelScope.launch { _events.emit(UiEvent.ShowMessage("Server URL is empty")) }
+            return
         }
+        requestSyncDryRun(
+            mode = SyncMode.BOTH_WAYS,
+            scopes = SyncScopes(syncBills = true, syncCustomers = true, syncRates = true, syncSettings = false)
+        )
     }
 
     // --- Internal Helpers ---
@@ -852,7 +1173,8 @@ class CashmemoViewModel(
             notes = notes,
             rawOcrText = rawOcrText,
             sourceImageUri = sourceImageUri,
-            createdAt = createdAt
+            createdAt = createdAt,
+            rateLinks = emptyMap()
         )
     }
 
@@ -875,12 +1197,11 @@ class CashmemoViewModel(
 
     class Factory(
         private val repository: CashmemoRepository,
-        private val ocrService: OcrScannerService,
         private val geminiService: GeminiVisionService
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return CashmemoViewModel(repository, ocrService, geminiService) as T
+            return CashmemoViewModel(repository, geminiService) as T
         }
     }
 }

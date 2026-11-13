@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,6 +46,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,6 +55,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -91,6 +96,8 @@ fun ReviewEditorScreen(
     onUpdateItemQuantity: (Int, String) -> Unit,
     onUpdateItemRate: (Int, String) -> Unit,
     onSelectPlantRate: (Int, PlantRate) -> Unit,
+    onResetItemRate: (Int) -> Unit = {},
+    onSavePlantRate: (PlantRate) -> Unit = {},
     onUpdateDiscount: (String) -> Unit,
     onUpdateDiscountType: (DiscountType) -> Unit,
     onUpdateTaxPercentage: (String) -> Unit,
@@ -344,21 +351,43 @@ fun ReviewEditorScreen(
                     var rateInput by remember(item.id) {
                         mutableStateOf(formatCleanNumber(item.rate, blankIfZero = true))
                     }
+                    val qtyFocusRequester = remember { FocusRequester() }
+                    var isDescFocused by remember { mutableStateOf(false) }
+                    var showSuggestions by remember { mutableStateOf(false) }
+
                     LaunchedEffect(item.id, item.quantity) {
                         if (item.quantity != (qtyInput.toDoubleOrNull() ?: 0.0)) {
                             qtyInput = formatCleanNumber(item.quantity, blankIfZero = false)
                         }
                     }
                     LaunchedEffect(item.id, item.rate) {
-                        if (item.rate != (rateInput.toDoubleOrNull() ?: 0.0) && item.rate > 0.0) {
+                        val currentVal = rateInput.toDoubleOrNull() ?: 0.0
+                        if (Math.abs(item.rate - currentVal) > 0.0001) {
                             rateInput = formatCleanNumber(item.rate, blankIfZero = true)
                         }
                     }
 
-                    val rateMatches = remember(item.description, plantRates) {
-                        val q = item.description.trim().lowercase()
-                        if (q.isEmpty()) emptyList()
-                        else plantRates.filter { it.name.lowercase().contains(q) }.take(4)
+                    val query = item.description.trim().lowercase()
+                    val rateMatches = remember(query, plantRates) {
+                        if (query.isBlank()) emptyList()
+                        else {
+                            val startsWithName = mutableListOf<PlantRate>()
+                            val containsName = mutableListOf<PlantRate>()
+                            val containsCategory = mutableListOf<PlantRate>()
+
+                            for (p in plantRates) {
+                                val n = p.name.trim().lowercase()
+                                val c = p.category.trim().lowercase()
+                                if (n.startsWith(query)) {
+                                    startsWithName.add(p)
+                                } else if (n.contains(query)) {
+                                    containsName.add(p)
+                                } else if (c.contains(query)) {
+                                    containsCategory.add(p)
+                                }
+                            }
+                            (startsWithName + containsName + containsCategory).distinctBy { it.id }.take(8)
+                        }
                     }
 
                     Surface(
@@ -420,34 +449,150 @@ fun ReviewEditorScreen(
 
                             OutlinedTextField(
                                 value = item.description,
-                                onValueChange = { onUpdateItemDescription(index, it) },
+                                onValueChange = {
+                                    onUpdateItemDescription(index, it)
+                                    showSuggestions = true
+                                },
                                 label = { Text("Item / Plant Description", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onFocusChanged { focusState ->
+                                        isDescFocused = focusState.isFocused
+                                        if (focusState.isFocused) {
+                                            showSuggestions = true
+                                        }
+                                    }
                             )
 
-                            if (rateMatches.isNotEmpty() && item.rate == 0.0) {
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    rateMatches.forEach { matched ->
-                                        val tierPrice = if (editorState.isWholesaleMode) {
-                                            matched.wholesalePrice
-                                        } else {
-                                            matched.retailPrice
-                                        }
-                                        Row(
+                            if ((isDescFocused || showSuggestions) && item.description.isNotBlank()) {
+                                if (rateMatches.isNotEmpty()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = NurseryColors.PaperSurface,
+                                        border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                                        shadowElevation = 2.dp,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 220.dp)
+                                    ) {
+                                        Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clickable { onSelectPlantRate(index, matched) }
-                                                .padding(horizontal = 6.dp, vertical = 4.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                .verticalScroll(rememberScrollState())
+                                                .padding(4.dp)
                                         ) {
-                                            Text(matched.name, style = MaterialTheme.typography.bodySmall)
+                                            rateMatches.forEach { matched ->
+                                                val isWholesale = editorState.isWholesaleMode
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            onSelectPlantRate(index, matched)
+                                                            showSuggestions = false
+                                                            try {
+                                                                qtyFocusRequester.requestFocus()
+                                                            } catch (_: Exception) {}
+                                                        }
+                                                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.weight(1f, fill = false)
+                                                    ) {
+                                                        Text(
+                                                            text = matched.name,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = NurseryColors.InkDark,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        if (matched.category.isNotBlank()) {
+                                                            Surface(
+                                                                shape = RoundedCornerShape(4.dp),
+                                                                color = NurseryColors.MaroonLight.copy(alpha = 0.5f)
+                                                            ) {
+                                                                Text(
+                                                                    text = matched.category,
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    color = NurseryColors.Maroon,
+                                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                        Text(
+                                                            text = "R ${IndianCurrencyFormatter.formatInr(matched.retailPrice, settings.currencySymbol)}",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = if (!isWholesale) FontWeight.ExtraBold else FontWeight.Normal,
+                                                            color = if (!isWholesale) NurseryColors.Maroon else NurseryColors.InkMedium
+                                                        )
+                                                        Text("|", style = MaterialTheme.typography.labelSmall, color = NurseryColors.OutlineSoft)
+                                                        Text(
+                                                            text = "W ${IndianCurrencyFormatter.formatInr(matched.wholesalePrice, settings.currencySymbol)}",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontWeight = if (isWholesale) FontWeight.ExtraBold else FontWeight.Normal,
+                                                            color = if (isWholesale) NurseryColors.Maroon else NurseryColors.InkMedium
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = NurseryColors.PaperSurface,
+                                        border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 2.dp)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
                                             Text(
-                                                text = IndianCurrencyFormatter.formatInr(tierPrice, settings.currencySymbol),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = NurseryColors.Maroon
+                                                text = "No saved plant matches",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = NurseryColors.InkMedium
                                             )
+                                            if (item.rate > 0.0) {
+                                                TextButton(
+                                                    onClick = {
+                                                        onSavePlantRate(
+                                                            PlantRate(
+                                                                name = item.description.trim(),
+                                                                retailPrice = if (!editorState.isWholesaleMode) item.rate else item.rate,
+                                                                wholesalePrice = if (editorState.isWholesaleMode) item.rate else 0.0,
+                                                                category = "General"
+                                                            )
+                                                        )
+                                                        showSuggestions = false
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Add,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(14.dp),
+                                                        tint = NurseryColors.BotanicalGreen
+                                                    )
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text(
+                                                        text = "Save \"${item.description.trim()}\" to Plant Rates",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = NurseryColors.BotanicalGreen,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -463,7 +608,9 @@ fun ReviewEditorScreen(
                                     label = { Text("Qty", maxLines = 1) },
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .focusRequester(qtyFocusRequester)
                                 )
                                 OutlinedTextField(
                                     value = rateInput,
@@ -476,6 +623,44 @@ fun ReviewEditorScreen(
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     modifier = Modifier.weight(1.3f)
                                 )
+                            }
+
+                            val linkedPlant = editorState.rateLinks[item.id]?.let { link ->
+                                plantRates.firstOrNull { it.id == link.plantRateId }
+                            } ?: plantRates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
+
+                            if (linkedPlant != null) {
+                                val tierLabel = if (editorState.isWholesaleMode) "wholesale" else "retail"
+                                val savedTierPrice = if (editorState.isWholesaleMode) {
+                                    if (linkedPlant.wholesalePrice > 0.0) linkedPlant.wholesalePrice else linkedPlant.retailPrice
+                                } else linkedPlant.retailPrice
+
+                                val isCustom = Math.abs(item.rate - savedTierPrice) > 0.01
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 2.dp, start = 4.dp),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    if (!isCustom) {
+                                        Text(
+                                            text = "Saved $tierLabel ${IndianCurrencyFormatter.formatInr(savedTierPrice, settings.currencySymbol)}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = NurseryColors.BotanicalGreen
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "Custom — saved $tierLabel ${IndianCurrencyFormatter.formatInr(savedTierPrice, settings.currencySymbol)} (tap to reset)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = NurseryColors.Maroon,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.clickable {
+                                                onResetItemRate(index)
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

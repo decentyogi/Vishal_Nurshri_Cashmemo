@@ -160,7 +160,7 @@ fun BillDto.toDomain(synced: Boolean = true): CashMemo = CashMemo(
     notes = notes,
     isSynced = synced,
     createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
-    updatedAt = if (updatedAt > 0L) updatedAt else System.currentTimeMillis()
+    updatedAt = if (updatedAt > 0L) updatedAt else 0L
 )
 
 fun CustomerEntity.toDomain(): CustomerProfile = CustomerProfile(
@@ -220,7 +220,8 @@ fun PlantRateEntity.toDomain(): PlantRate = PlantRate(
     name = name,
     category = category,
     retailPrice = retailPrice,
-    wholesalePrice = wholesalePrice
+    wholesalePrice = wholesalePrice,
+    updatedAt = updatedAt
 )
 
 fun PlantRate.toEntity(): PlantRateEntity = PlantRateEntity(
@@ -228,7 +229,8 @@ fun PlantRate.toEntity(): PlantRateEntity = PlantRateEntity(
     name = name,
     category = category,
     retailPrice = retailPrice,
-    wholesalePrice = wholesalePrice
+    wholesalePrice = wholesalePrice,
+    updatedAt = updatedAt
 )
 
 fun PlantRate.toDto(): PlantRateDto = PlantRateDto(
@@ -236,7 +238,8 @@ fun PlantRate.toDto(): PlantRateDto = PlantRateDto(
     name = name,
     category = category,
     retailPrice = retailPrice,
-    wholesalePrice = wholesalePrice
+    wholesalePrice = wholesalePrice,
+    updatedAt = updatedAt
 )
 
 fun PlantRateDto.toDomain(): PlantRate = PlantRate(
@@ -244,7 +247,8 @@ fun PlantRateDto.toDomain(): PlantRate = PlantRate(
     name = name,
     category = category,
     retailPrice = retailPrice,
-    wholesalePrice = wholesalePrice
+    wholesalePrice = wholesalePrice,
+    updatedAt = updatedAt
 )
 
 fun BusinessSettings.toDto(): SettingsDto = SettingsDto(

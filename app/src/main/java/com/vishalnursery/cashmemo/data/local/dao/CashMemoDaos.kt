@@ -48,6 +48,9 @@ interface MemoDao {
     @Query("DELETE FROM cash_memos WHERE id = :id")
     suspend fun deleteMemoById(id: String)
 
+    @Query("DELETE FROM cash_memos WHERE id IN (:ids)")
+    suspend fun deleteMemosByIds(ids: List<String>)
+
     @Query("UPDATE cash_memos SET isSynced = :synced WHERE id = :id")
     suspend fun markSynced(id: String, synced: Boolean)
 }
@@ -72,6 +75,9 @@ interface CustomerDao {
 
     @Query("DELETE FROM customers WHERE id = :id")
     suspend fun deleteCustomerById(id: String)
+
+    @Query("DELETE FROM customers WHERE id IN (:ids)")
+    suspend fun deleteCustomersByIds(ids: List<String>)
 }
 
 @Dao
@@ -91,4 +97,10 @@ interface PlantRateDao {
 
     @Query("DELETE FROM plant_rates WHERE id = :id")
     suspend fun deleteRateById(id: String)
+
+    @Query("DELETE FROM plant_rates WHERE id IN (:ids)")
+    suspend fun deleteRatesByIds(ids: List<String>)
+
+    @Query("DELETE FROM plant_rates")
+    suspend fun deleteAllRates()
 }

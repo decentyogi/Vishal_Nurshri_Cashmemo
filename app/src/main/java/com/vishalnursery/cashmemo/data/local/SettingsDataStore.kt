@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
+import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -43,6 +44,8 @@ class SettingsDataStore(private val context: Context) {
         val GEMINI_MODEL = stringPreferencesKey("gemini_model")
         val TRANSLATION_MODE = stringPreferencesKey("translation_mode")
         val BILL_EXPORT_LAYOUT = stringPreferencesKey("bill_export_layout")
+        val SCAN_ENGINE = stringPreferencesKey("scan_engine")
+        val LAST_SYNC_STATUS = stringPreferencesKey("last_sync_status")
     }
 
     private val defaults = BusinessSettings()
@@ -72,8 +75,19 @@ class SettingsDataStore(private val context: Context) {
             geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: defaults.geminiApiKey,
             geminiModel = prefs[Keys.GEMINI_MODEL]?.takeIf { it.isNotBlank() } ?: defaults.geminiModel,
             translationMode = TranslationMode.fromWire(prefs[Keys.TRANSLATION_MODE]),
-            billExportLayout = BillExportLayout.fromWire(prefs[Keys.BILL_EXPORT_LAYOUT])
+            billExportLayout = BillExportLayout.fromWire(prefs[Keys.BILL_EXPORT_LAYOUT]),
+            scanEngine = ScanEngine.fromWire(prefs[Keys.SCAN_ENGINE])
         )
+    }
+
+    val lastSyncStatusFlow: Flow<String> = context.settingsDataStore.data.map { prefs ->
+        prefs[Keys.LAST_SYNC_STATUS] ?: "Never synced"
+    }
+
+    suspend fun saveLastSyncStatus(status: String) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[Keys.LAST_SYNC_STATUS] = status
+        }
     }
 
     suspend fun getSettingsOnce(): BusinessSettings = settingsFlow.first()
@@ -104,7 +118,9 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.GEMINI_MODEL] = settings.geminiModel.trim().ifBlank { defaults.geminiModel }
             prefs[Keys.TRANSLATION_MODE] = settings.translationMode.wireValue
             prefs[Keys.BILL_EXPORT_LAYOUT] = settings.billExportLayout.wireValue
+            prefs[Keys.SCAN_ENGINE] = settings.scanEngine.wireValue
         }
+    }
     }
 
     suspend fun incrementNextMemoIfNeeded(usedMemoNumber: String) {

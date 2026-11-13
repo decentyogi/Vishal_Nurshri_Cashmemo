@@ -12,6 +12,9 @@ import com.google.gson.annotations.SerializedName
 import com.vishalnursery.cashmemo.domain.model.AiExtractedItem
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
+import com.vishalnursery.cashmemo.domain.util.AiPrompts
+import com.vishalnursery.cashmemo.domain.util.AiTextParser
+import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -153,13 +156,33 @@ class GeminiVisionService(private val context: Context) {
         }
     }
 
+    suspend fun analyzeRateList(
+        uri: Uri,
+        apiKey: String,
+        preferredModel: String,
+        translationMode: TranslationMode
+    ): Result<List<ParsedRateRow>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val cleanKey = apiKey.trim()
+            require(cleanKey.isNotEmpty()) { "Please add your Gemini API key first." }
+
+            val base64Jpeg = encodeCompressedJpegBase64(uri)
+            val prompt = AiPrompts.getRateListPrompt(translationMode)
+            val initialModel = preferredModel.trim().ifBlank { "gemini-3.5-flash" }
+
+            val (rawText, _) = tryModelWithAutoFallback(cleanKey, initialModel, base64Jpeg, prompt, isJson = false)
+            AiTextParser.parseRateList(rawText).take(50)
+        }
+    }
+
     private fun tryModelWithAutoFallback(
         apiKey: String,
         initialModel: String,
         base64Jpeg: String,
-        prompt: String
+        prompt: String,
+        isJson: Boolean = true
     ): Pair<String, String> {
-        val firstAttempt = callGenerateContent(apiKey, initialModel, base64Jpeg, prompt)
+        val firstAttempt = callGenerateContent(apiKey, initialModel, base64Jpeg, prompt, isJson)
         if (firstAttempt.isSuccess) {
             return firstAttempt.getOrThrow() to initialModel
         }
@@ -179,7 +202,7 @@ class GeminiVisionService(private val context: Context) {
             )).distinct().filter { it != initialModel }
 
             for (candidate in fallbacks) {
-                val retry = callGenerateContent(apiKey, candidate, base64Jpeg, prompt)
+                val retry = callGenerateContent(apiKey, candidate, base64Jpeg, prompt, isJson)
                 if (retry.isSuccess) {
                     return retry.getOrThrow() to candidate
                 }
@@ -192,7 +215,8 @@ class GeminiVisionService(private val context: Context) {
         apiKey: String,
         modelId: String,
         base64Jpeg: String,
-        prompt: String
+        prompt: String,
+        isJson: Boolean = true
     ): Result<String> = runCatching {
         val payload = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -212,7 +236,9 @@ class GeminiVisionService(private val context: Context) {
             })
             put("generationConfig", JSONObject().apply {
                 put("temperature", 0.1)
-                put("responseMimeType", "application/json")
+                if (isJson) {
+                    put("responseMimeType", "application/json")
+                }
             })
         }
 
@@ -338,13 +364,20 @@ class GeminiVisionService(private val context: Context) {
     }
 
     private fun extractApiErrorMessage(code: Int, body: String): String {
-        val apiMsg = runCatching {
-            JSONObject(body).optJSONObject("error")?.optString("message")
-        }.getOrNull()
-        return if (!apiMsg.isNullOrBlank()) {
-            "Gemini API ($code): $apiMsg"
-        } else {
-            "Gemini API HTTP $code"
+        return when (code) {
+            429 -> "Gemini free-tier limit reached. Try later or use another AI."
+            400, 403 -> "Gemini rejected the API key."
+            404 -> "Gemini model not found."
+            else -> {
+                val apiMsg = runCatching {
+                    JSONObject(body).optJSONObject("error")?.optString("message")
+                }.getOrNull()
+                if (!apiMsg.isNullOrBlank()) {
+                    "Gemini API ($code): $apiMsg"
+                } else {
+                    "Gemini API HTTP $code"
+                }
+            }
         }
     }
 

@@ -99,11 +99,17 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material3.FilterChipDefaults
 import com.vishalnursery.cashmemo.domain.model.AiExtractedItem
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
+import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
+import com.vishalnursery.cashmemo.domain.util.AiPrompts
+import com.vishalnursery.cashmemo.domain.util.AiTextParser
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
+import com.vishalnursery.cashmemo.ui.components.AiPasteSheet
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import com.vishalnursery.cashmemo.ui.viewmodel.ScannerUiState
 import java.io.File
@@ -112,13 +118,17 @@ import java.io.File
 fun ScannerScreen(
     scannerState: ScannerUiState,
     settings: BusinessSettings,
+    onSelectScanEngine: (ScanEngine) -> Unit,
     onSelectTranslationMode: (TranslationMode) -> Unit,
     onImageCaptured: (Uri) -> Unit,
     onOpenApiKeySetup: () -> Unit,
     onDismissApiKeyPrompt: () -> Unit,
     onSaveGeminiConfig: (String, String) -> Unit,
     onDetectFlashModels: (String?) -> Unit,
-    onRunOfflineFallback: (Uri) -> Unit,
+    onOpenAiPaste: (String?) -> Unit,
+    onCloseAiPaste: () -> Unit,
+    onUpdateAiPasteText: (String) -> Unit,
+    onSubmitAiPaste: () -> Unit,
     onConfirmAiReview: (AiScanPreview) -> Unit,
     onDismissAiReview: () -> Unit,
     onOpenReview: () -> Unit,
@@ -204,13 +214,10 @@ fun ScannerScreen(
             hasPendingImage = scannerState.pendingUriForKeySetup.isNotBlank(),
             onDetectModels = onDetectFlashModels,
             onSave = onSaveGeminiConfig,
-            onRunOfflineFallback = {
+            onUseAnotherAi = {
                 val uriText = scannerState.pendingUriForKeySetup
-                if (uriText.isNotBlank()) {
-                    onRunOfflineFallback(Uri.parse(uriText))
-                } else {
-                    onDismissApiKeyPrompt()
-                }
+                onDismissApiKeyPrompt()
+                onOpenAiPaste(uriText.takeIf { it.isNotBlank() })
             },
             onDismiss = onDismissApiKeyPrompt
         )
@@ -223,6 +230,35 @@ fun ScannerScreen(
             currencySymbol = settings.currencySymbol,
             onConfirmPaste = onConfirmAiReview,
             onDismiss = onDismissAiReview
+        )
+    }
+
+    // Modal 3: Paste from Another AI Bottom Sheet
+    if (scannerState.isAiPasteOpen) {
+        AiPasteSheet(
+            title = "Paste from AI (ChatGPT / Gemini / Claude)",
+            promptText = AiPrompts.getMemoPrompt(settings.translationMode),
+            hint = "Paste AI output here (e.g. 5 | Mango | 150)...",
+            liveStatus = { text ->
+                if (text.isBlank()) null
+                else {
+                    val preview = AiTextParser.parseMemoText(text)
+                    val count = preview.items.count { it.translatedName.isNotBlank() || it.rate != "0" }
+                    if (count > 0) "$count item(s) found" else "No items detected yet"
+                }
+            },
+            onSubmit = { onSubmitAiPaste() },
+            onDismiss = onCloseAiPaste,
+            imageUri = scannerState.aiPasteImageUri,
+            onPickImage = {
+                galleryLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            currentTranslationMode = settings.translationMode,
+            onSelectTranslationMode = onSelectTranslationMode,
+            pastedText = scannerState.aiPasteText,
+            onPastedTextChanged = onUpdateAiPasteText
         )
     }
 
@@ -283,7 +319,7 @@ fun ScannerScreen(
             }
         }
 
-        // Translation Output Mode Bar
+        // Engine switch + Translation Output Mode Bar + Paste AI text button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -291,6 +327,57 @@ fun ScannerScreen(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Engine Switcher: Gemini | Other AI
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(NurseryColors.PaperSurface)
+                    .border(1.dp, NurseryColors.OutlineSoft, RoundedCornerShape(16.dp))
+                    .padding(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (settings.scanEngine == ScanEngine.GEMINI) NurseryColors.Maroon else Color.Transparent,
+                    modifier = Modifier.clickable { onSelectScanEngine(ScanEngine.GEMINI) }
+                ) {
+                    Text(
+                        text = "Gemini",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (settings.scanEngine == ScanEngine.GEMINI) FontWeight.Bold else FontWeight.Normal,
+                        color = if (settings.scanEngine == ScanEngine.GEMINI) Color.White else NurseryColors.DarkInk,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (settings.scanEngine == ScanEngine.OTHER_AI) NurseryColors.Maroon else Color.Transparent,
+                    modifier = Modifier.clickable { onSelectScanEngine(ScanEngine.OTHER_AI) }
+                ) {
+                    Text(
+                        text = "Other AI",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (settings.scanEngine == ScanEngine.OTHER_AI) FontWeight.Bold else FontWeight.Normal,
+                        color = if (settings.scanEngine == ScanEngine.OTHER_AI) Color.White else NurseryColors.DarkInk,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            // Always-visible "Paste AI text" button
+            OutlinedButton(
+                onClick = { onOpenAiPaste(null) },
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Paste AI text", style = MaterialTheme.typography.labelSmall)
+            }
+
+            Spacer(Modifier.width(2.dp))
+
             Icon(
                 imageVector = Icons.Default.Translate,
                 contentDescription = null,
@@ -487,14 +574,22 @@ fun ScannerScreen(
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onOpenApiKeySetup) {
-                            Text("Configure Key / Model")
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { onOpenAiPaste(scannerState.lastImageUri.takeIf { it.isNotBlank() }) },
+                            colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("Use another AI")
                         }
-                        if (scannerState.lastImageUri.isNotBlank()) {
-                            TextButton(onClick = { onRunOfflineFallback(Uri.parse(scannerState.lastImageUri)) }) {
-                                Text("Try Offline ML Kit")
-                            }
+                        OutlinedButton(
+                            onClick = onOpenApiKeySetup,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("Configure Key / Model")
                         }
                     }
                 }
@@ -552,7 +647,7 @@ private fun GeminiApiKeySetupDialog(
     hasPendingImage: Boolean,
     onDetectModels: (String?) -> Unit,
     onSave: (String, String) -> Unit,
-    onRunOfflineFallback: () -> Unit,
+    onUseAnotherAi: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var apiKey by remember(initialApiKey) { mutableStateOf(initialApiKey) }
@@ -666,8 +761,8 @@ private fun GeminiApiKeySetupDialog(
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (hasPendingImage) {
-                    TextButton(onClick = onRunOfflineFallback) {
-                        Text("Offline OCR")
+                    TextButton(onClick = onUseAnotherAi) {
+                        Text("Use another AI")
                     }
                 }
                 TextButton(onClick = onDismiss) {

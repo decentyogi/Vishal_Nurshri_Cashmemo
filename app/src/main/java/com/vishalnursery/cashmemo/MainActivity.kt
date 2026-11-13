@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             CashmemoTheme {
                 val viewModel: CashmemoViewModel = viewModel(
-                    factory = CashmemoViewModel.Factory(app.repository, app.ocrService, app.geminiVisionService)
+                    factory = CashmemoViewModel.Factory(app.repository, app.geminiVisionService)
                 )
                 CashmemoAppRoot(viewModel = viewModel)
             }
@@ -176,13 +176,17 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
             AppDestination.SCANNER -> ScannerScreen(
                 scannerState = uiState.scanner,
                 settings = uiState.settings,
+                onSelectScanEngine = viewModel::setScanEngine,
                 onSelectTranslationMode = viewModel::setTranslationMode,
                 onImageCaptured = viewModel::processImageForOcr,
                 onOpenApiKeySetup = viewModel::openApiKeyPrompt,
                 onDismissApiKeyPrompt = viewModel::dismissApiKeyPrompt,
                 onSaveGeminiConfig = viewModel::saveGeminiConfigAndResumeScan,
                 onDetectFlashModels = viewModel::detectAvailableGeminiModels,
-                onRunOfflineFallback = viewModel::runOfflineMlKitFallback,
+                onOpenAiPaste = viewModel::openAiPaste,
+                onCloseAiPaste = viewModel::closeAiPaste,
+                onUpdateAiPasteText = viewModel::updateAiPasteText,
+                onSubmitAiPaste = viewModel::submitAiPaste,
                 onConfirmAiReview = viewModel::applyAiReviewToEditor,
                 onDismissAiReview = viewModel::dismissAiReviewDialog,
                 onOpenReview = viewModel::openReviewFromLastScan,
@@ -209,6 +213,8 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 onUpdateItemQuantity = viewModel::updateItemQuantity,
                 onUpdateItemRate = viewModel::updateItemRate,
                 onSelectPlantRate = viewModel::applyPlantRateSuggestion,
+                onResetItemRate = viewModel::resetItemToSavedRate,
+                onSavePlantRate = viewModel::savePlantRate,
                 onUpdateDiscount = viewModel::updateDiscount,
                 onUpdateDiscountType = viewModel::updateDiscountType,
                 onUpdateTaxPercentage = viewModel::updateTaxPercentage,
@@ -262,18 +268,29 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 onShareMemoPdf = viewModel::shareMemoAsPdf,
                 onSavePlantRate = viewModel::savePlantRate,
                 onDeletePlantRate = viewModel::deletePlantRate,
+                onExportPlantRatesJson = viewModel::exportPlantRatesJson,
+                onExportPlantRatesCsv = viewModel::exportPlantRatesCsv,
+                onImportPlantRates = viewModel::importPlantRates,
                 modifier = contentModifier
             )
 
             AppDestination.SETTINGS -> SettingsScreen(
                 settings = uiState.settings,
                 isSyncing = uiState.isSyncing,
+                syncProgressText = uiState.syncProgressText,
+                lastSyncStatus = uiState.lastSyncStatus,
+                dryRunPreview = uiState.dryRunPreview,
                 availableFlashModels = uiState.scanner.availableFlashModels,
                 isDetectingModels = uiState.scanner.isDetectingModels,
+                safetySnapshots = viewModel.listSafetySnapshots(),
                 onSaveSettings = viewModel::saveSettings,
                 onSavePermanentQr = viewModel::savePermanentUpiConfig,
                 onDetectFlashModels = viewModel::detectAvailableGeminiModels,
-                onSyncNow = viewModel::syncNow,
+                onTestConnection = viewModel::testConnection,
+                onRequestSync = viewModel::requestSyncDryRun,
+                onConfirmDryRun = viewModel::confirmDryRun,
+                onDismissDryRun = viewModel::dismissDryRun,
+                onRestoreSnapshot = viewModel::restoreSnapshotFile,
                 onExportJsonBackup = viewModel::exportJsonBackup,
                 onImportJsonBackup = viewModel::importBackupJson,
                 modifier = contentModifier

@@ -1,5 +1,6 @@
 package com.vishalnursery.cashmemo.data.repository
 
+import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.vishalnursery.cashmemo.data.local.CashmemoDatabase
@@ -22,17 +23,32 @@ import java.util.Locale
 import java.util.TimeZone
 import kotlin.math.max
 
+enum class PlantRateImportPolicy(val label: String) {
+    ADD_NEW_AND_UPDATE_EXISTING("Add new + update existing"),
+    ADD_NEW_ONLY("Add new only (keep existing)"),
+    REPLACE_ALL("Replace all plant rates")
+}
+
+data class PlantRateImportSummary(
+    val addedCount: Int,
+    val updatedCount: Int,
+    val unchangedCount: Int
+)
+
 /**
  * Offline-first repository combining Room, Jetpack DataStore, and optional Flask REST sync.
  */
 class CashmemoRepository(
     private val database: CashmemoDatabase,
-    private val settingsDataStore: SettingsDataStore
+    private val settingsDataStore: SettingsDataStore,
+    private val context: Context
 ) {
     private val memoDao = database.memoDao()
     private val customerDao = database.customerDao()
     private val rateDao = database.plantRateDao()
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
+
+    val syncManager: SyncManager = SyncManager(context, database, settingsDataStore)
 
     val memosFlow: Flow<List<CashMemo>> =
         memoDao.observeAllMemos().map { list -> list.map { it.toDomain() } }
@@ -153,10 +169,11 @@ class CashmemoRepository(
     }
 
     suspend fun savePlantRate(rate: PlantRate) = withContext(Dispatchers.IO) {
-        rateDao.upsertRate(rate.toEntity())
+        val cleanRate = rate.copy(updatedAt = System.currentTimeMillis())
+        rateDao.upsertRate(cleanRate.toEntity())
         val settings = settingsDataStore.getSettingsOnce()
         if (settings.autoSyncEnabled && settings.serverBaseUrl.isNotBlank()) {
-            runCatching { DynamicBaseUrlClient.getService(settings.serverBaseUrl)?.saveRate(rate.toDto()) }
+            runCatching { DynamicBaseUrlClient.getService(settings.serverBaseUrl)?.saveRate(cleanRate.toDto()) }
         }
     }
 
@@ -168,47 +185,84 @@ class CashmemoRepository(
         }
     }
 
+    suspend fun exportPlantRatesJson(): String = withContext(Dispatchers.IO) {
+        val rates = rateDao.getAllRatesOnce().map { it.toDomain() }
+        gson.toJson(rates)
+    }
+
+    suspend fun exportPlantRatesCsv(): String = withContext(Dispatchers.IO) {
+        val rates = rateDao.getAllRatesOnce().map { it.toDomain() }
+        val sb = StringBuilder()
+        sb.append('\uFEFF') // UTF-8 BOM so Excel opens Hindi characters properly
+        sb.appendLine("PlantName,Category,RetailPrice,WholesalePrice")
+        for (r in rates) {
+            fun esc(s: String) = "\"${s.replace("\"", "\"\"")}\""
+            sb.appendLine("${esc(r.name)},${esc(r.category)},${r.retailPrice},${r.wholesalePrice}")
+        }
+        sb.toString()
+    }
+
+    suspend fun importPlantRates(
+        rows: List<PlantRate>,
+        policy: PlantRateImportPolicy
+    ): Result<PlantRateImportSummary> = withContext(Dispatchers.IO) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            val existing = rateDao.getAllRatesOnce().map { it.toDomain() }
+            var added = 0
+            var updated = 0
+            var unchanged = 0
+
+            when (policy) {
+                PlantRateImportPolicy.REPLACE_ALL -> {
+                    rateDao.deleteAllRates()
+                    val entities = rows.map { it.copy(updatedAt = now).toEntity() }
+                    rateDao.upsertAll(entities)
+                    added = entities.size
+                }
+                PlantRateImportPolicy.ADD_NEW_AND_UPDATE_EXISTING -> {
+                    for (row in rows) {
+                        val match = existing.firstOrNull { it.name.trim().equals(row.name.trim(), ignoreCase = true) }
+                        if (match != null) {
+                            if (match.retailPrice == row.retailPrice && match.wholesalePrice == row.wholesalePrice && match.category == row.category) {
+                                unchanged++
+                            } else {
+                                rateDao.upsertRate(row.copy(id = match.id, updatedAt = now).toEntity())
+                                updated++
+                            }
+                        } else {
+                            rateDao.upsertRate(row.copy(updatedAt = now).toEntity())
+                            added++
+                        }
+                    }
+                }
+                PlantRateImportPolicy.ADD_NEW_ONLY -> {
+                    for (row in rows) {
+                        val match = existing.firstOrNull { it.name.trim().equals(row.name.trim(), ignoreCase = true) }
+                        if (match == null) {
+                            rateDao.upsertRate(row.copy(updatedAt = now).toEntity())
+                            added++
+                        } else {
+                            unchanged++
+                        }
+                    }
+                }
+            }
+            PlantRateImportSummary(added, updated, unchanged)
+        }
+    }
+
     /**
-     * Bidirectional sync with Cashmemo_AI_Web Flask backend.
+     * Bidirectional sync delegated to SyncManager.
      */
     suspend fun syncWithBackend(serverUrlOverride: String? = null): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val currentSettings = settingsDataStore.getSettingsOnce()
-            val targetUrl = serverUrlOverride ?: currentSettings.serverBaseUrl
-            val api = DynamicBaseUrlClient.getService(targetUrl)
-                ?: error("Enter a valid server URL (e.g. http://192.168.1.10:8080)")
-
-            // 1. Push unsynced local memos first
-            val localMemos = memoDao.getAllMemosOnce().map { it.toDomain() }
-            var pushedCount = 0
-            for (memo in localMemos.filter { !it.isSynced }) {
-                api.saveBill(memo.toDto())
-                memoDao.markSynced(memo.id, true)
-                pushedCount++
-            }
-
-            // 2. Pull full remote snapshot
-            val remoteBackup = api.exportBackup()
-            remoteBackup.settings?.let { remoteSettings ->
-                settingsDataStore.saveSettings(remoteSettings.mergeInto(currentSettings))
-            }
-
-            val remoteMemos = remoteBackup.bills.map { it.toDomain(synced = true) }
-            for (remote in remoteMemos) {
-                val existing = memoDao.getMemoById(remote.id)
-                if (existing == null || remote.updatedAt >= existing.memo.updatedAt) {
-                    memoDao.upsertMemoWithItems(remote.toEntity(), remote.toItemEntities())
-                }
-            }
-
-            if (remoteBackup.customers.isNotEmpty()) {
-                customerDao.upsertAll(remoteBackup.customers.map { it.toDomain().toEntity() })
-            }
-            if (remoteBackup.rates.isNotEmpty()) {
-                rateDao.upsertAll(remoteBackup.rates.map { it.toDomain().toEntity() })
-            }
-
-            "Synced ($pushedCount pushed, ${remoteMemos.size} bills on server)"
+            val settings = settingsDataStore.getSettingsOnce()
+            val targetUrl = serverUrlOverride ?: settings.serverBaseUrl
+            require(targetUrl.isNotBlank()) { "Enter a valid server URL" }
+            val scopes = SyncScopes(syncBills = true, syncCustomers = true, syncRates = true, syncSettings = false)
+            val summary = syncManager.executeSync(SyncMode.BOTH_WAYS, scopes, targetUrl) {}.getOrThrow()
+            summary.message
         }
     }
 

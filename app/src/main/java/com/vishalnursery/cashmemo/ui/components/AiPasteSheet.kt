@@ -93,10 +93,10 @@ fun AiPasteSheet(
     currentTranslationMode: TranslationMode,
     onSelectTranslationMode: (TranslationMode) -> Unit,
     pastedText: String,
-    onPastedTextChanged: (String) -> Unit,
-    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    onPastedTextChanged: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var isCopied by remember { mutableStateOf(false) }
     var showPromptPreview by remember { mutableStateOf(false) }
 

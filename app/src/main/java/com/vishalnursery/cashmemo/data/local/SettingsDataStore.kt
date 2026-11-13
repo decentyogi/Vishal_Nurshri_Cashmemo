@@ -121,7 +121,6 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.SCAN_ENGINE] = settings.scanEngine.wireValue
         }
     }
-    }
 
     suspend fun incrementNextMemoIfNeeded(usedMemoNumber: String) {
         val digits = usedMemoNumber.filter { it.isDigit() }.toIntOrNull() ?: return

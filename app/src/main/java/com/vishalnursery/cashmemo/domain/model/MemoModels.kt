@@ -90,7 +90,7 @@ data class CustomerProfile(
 data class PlantRate(
     val id: String = "pr_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(4)}",
     val name: String,
-    val category: String = "Plants",
+    val category: String = "",
     val retailPrice: Double = 0.0,
     val wholesalePrice: Double = 0.0,
     val updatedAt: Long = System.currentTimeMillis()
@@ -121,7 +121,8 @@ data class BusinessSettings(
     val geminiModel: String = "gemini-3.5-flash",
     val translationMode: TranslationMode = TranslationMode.ENGLISH_WITH_HINDI,
     val billExportLayout: BillExportLayout = BillExportLayout.CLASSIC_NURSERY,
-    val scanEngine: ScanEngine = ScanEngine.GEMINI
+    val scanEngine: ScanEngine = ScanEngine.GEMINI,
+    val rateNameStyle: RateNameStyle = RateNameStyle.ROMAN_WITH_HINDI
 )
 
 enum class ScanEngine(val wireValue: String, val label: String) {
@@ -131,6 +132,16 @@ enum class ScanEngine(val wireValue: String, val label: String) {
     companion object {
         fun fromWire(value: String?): ScanEngine =
             entries.firstOrNull { it.name.equals(value, ignoreCase = true) || it.wireValue.equals(value, ignoreCase = true) } ?: GEMINI
+    }
+}
+
+enum class RateNameStyle(val wireValue: String, val label: String) {
+    ROMAN_WITH_HINDI("roman_with_hindi", "Roman + Hindi"),
+    ENGLISH_WITH_HINDI("english_with_hindi", "English + Hindi"),
+    AS_WRITTEN("as_written", "As written");
+
+    companion object {
+        fun fromWire(value: String?) = entries.firstOrNull { it.wireValue == value } ?: ROMAN_WITH_HINDI
     }
 }
 

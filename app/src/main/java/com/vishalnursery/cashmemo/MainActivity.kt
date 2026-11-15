@@ -49,6 +49,7 @@ import com.vishalnursery.cashmemo.ui.theme.CashmemoTheme
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import com.vishalnursery.cashmemo.ui.viewmodel.AppDestination
 import com.vishalnursery.cashmemo.ui.viewmodel.CashmemoViewModel
+import com.vishalnursery.cashmemo.ui.viewmodel.RateReviewSource
 import com.vishalnursery.cashmemo.ui.viewmodel.UiEvent
 
 class MainActivity : ComponentActivity() {
@@ -258,6 +259,19 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 memos = uiState.allMemos,
                 plantRates = uiState.plantRates,
                 settings = uiState.settings,
+                rateScan = uiState.rateScan,
+                onSelectScanEngine = viewModel::setScanEngine,
+                onSelectRateNameStyle = viewModel::setRateNameStyle,
+                onScanRateImage = viewModel::scanRateListImage,
+                onOpenRatePaste = viewModel::openRatePaste,
+                onCloseRatePaste = viewModel::closeRatePaste,
+                onUpdateRatePasteText = viewModel::updateRatePasteText,
+                onSubmitRatePaste = viewModel::submitRatePaste,
+                onFileRatesParsed = { rows -> viewModel.showRateReview(rows, RateReviewSource.FILE) },
+                onDismissRateReview = viewModel::dismissRateReview,
+                onConfirmRateImport = viewModel::confirmRateImport,
+                onClearRateScanError = viewModel::clearRateScanError,
+                onOpenSettings = { viewModel.navigateTo(AppDestination.SETTINGS) },
                 onSaveCustomer = viewModel::saveCustomer,
                 onSettleCustomerDue = viewModel::settleCustomerDue,
                 onDeleteCustomer = viewModel::deleteCustomer,
@@ -270,7 +284,6 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 onDeletePlantRate = viewModel::deletePlantRate,
                 onExportPlantRatesJson = viewModel::exportPlantRatesJson,
                 onExportPlantRatesCsv = viewModel::exportPlantRatesCsv,
-                onImportPlantRates = viewModel::importPlantRates,
                 modifier = contentModifier
             )
 
@@ -293,6 +306,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 onRestoreSnapshot = viewModel::restoreSnapshotFile,
                 onExportJsonBackup = viewModel::exportJsonBackup,
                 onImportJsonBackup = viewModel::importBackupJson,
+                onClose = viewModel::closeSettings,
                 modifier = contentModifier
             )
         }

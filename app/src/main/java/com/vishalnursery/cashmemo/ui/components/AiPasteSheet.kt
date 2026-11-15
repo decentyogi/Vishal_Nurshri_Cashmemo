@@ -93,7 +93,13 @@ fun AiPasteSheet(
     currentTranslationMode: TranslationMode,
     onSelectTranslationMode: (TranslationMode) -> Unit,
     pastedText: String,
-    onPastedTextChanged: (String) -> Unit
+    onPastedTextChanged: (String) -> Unit,
+    chipsCaption: String = "Script & Language output:",
+    chipLabels: List<String>? = null,
+    selectedChipIndex: Int = 0,
+    onSelectChip: (Int) -> Unit = {},
+    readyCheck: ((String) -> Boolean)? = null,
+    submitLabel: String = "Send to Review"
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -108,7 +114,11 @@ fun AiPasteSheet(
     }
 
     val statusText = remember(pastedText) { liveStatus(pastedText) }
-    val canSubmit = !statusText.isNullOrBlank() && !statusText.contains("No items", ignoreCase = true)
+    val canSubmit = if (readyCheck != null) {
+        readyCheck(pastedText)
+    } else {
+        !statusText.isNullOrBlank() && !statusText.contains("No items", ignoreCase = true)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -142,7 +152,9 @@ fun AiPasteSheet(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = NurseryColors.DarkInk
+                    color = NurseryColors.DarkInk,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2
                 )
                 TextButton(onClick = onDismiss) {
                     Text("Close", color = NurseryColors.Maroon)
@@ -153,7 +165,7 @@ fun AiPasteSheet(
             StepContainer(stepNumber = 1, title = "Copy prompt") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Script & Language output:",
+                        text = chipsCaption,
                         style = MaterialTheme.typography.bodySmall,
                         color = NurseryColors.MutedInk
                     )
@@ -161,18 +173,34 @@ fun AiPasteSheet(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        TranslationMode.entries.forEach { mode ->
-                            FilterChip(
-                                selected = currentTranslationMode == mode,
-                                onClick = { onSelectTranslationMode(mode) },
-                                label = { Text(mode.label, fontSize = 12.sp) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = NurseryColors.GreenSoft,
-                                    selectedLabelColor = NurseryColors.GreenHeader,
-                                    containerColor = NurseryColors.PaperSurface,
-                                    labelColor = NurseryColors.DarkInk
+                        if (chipLabels != null) {
+                            chipLabels.forEachIndexed { index, label ->
+                                FilterChip(
+                                    selected = selectedChipIndex == index,
+                                    onClick = { onSelectChip(index) },
+                                    label = { Text(label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = NurseryColors.GreenSoft,
+                                        selectedLabelColor = NurseryColors.GreenHeader,
+                                        containerColor = NurseryColors.PaperSurface,
+                                        labelColor = NurseryColors.DarkInk
+                                    )
                                 )
-                            )
+                            }
+                        } else {
+                            TranslationMode.entries.forEach { mode ->
+                                FilterChip(
+                                    selected = currentTranslationMode == mode,
+                                    onClick = { onSelectTranslationMode(mode) },
+                                    label = { Text(mode.label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = NurseryColors.GreenSoft,
+                                        selectedLabelColor = NurseryColors.GreenHeader,
+                                        containerColor = NurseryColors.PaperSurface,
+                                        labelColor = NurseryColors.DarkInk
+                                    )
+                                )
+                            }
                         }
                     }
 
@@ -395,7 +423,7 @@ fun AiPasteSheet(
                             .fillMaxWidth()
                             .height(48.dp)
                     ) {
-                        Text("Send to Review", fontWeight = FontWeight.Bold)
+                        Text(submitLabel, fontWeight = FontWeight.Bold)
                     }
                 }
             }

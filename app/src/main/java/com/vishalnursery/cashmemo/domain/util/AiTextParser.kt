@@ -9,7 +9,7 @@ import java.util.UUID
 data class ParsedRateRow(
     val id: String = "pr_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(4)}",
     val name: String,
-    val category: String = "Plants",
+    val category: String = "",
     val retailPrice: Double = 0.0,
     val wholesalePrice: Double = 0.0,
     val isValid: Boolean = true,
@@ -337,48 +337,116 @@ object AiTextParser {
 
     fun parseRateList(text: String): List<ParsedRateRow> {
         val stripped = stripCodeFences(text.trim())
+
+        // 1. JSON parsing: array or {"rates": [...]}
+        if ((stripped.startsWith("[") && stripped.endsWith("]")) ||
+            (stripped.startsWith("{") && stripped.endsWith("}"))
+        ) {
+            val jsonRows = runCatching {
+                val array = if (stripped.startsWith("[")) {
+                    org.json.JSONArray(stripped)
+                } else {
+                    val obj = org.json.JSONObject(stripped)
+                    obj.optJSONArray("rates")
+                }
+                if (array != null && array.length() > 0) {
+                    val list = mutableListOf<ParsedRateRow>()
+                    for (i in 0 until array.length()) {
+                        val item = array.optJSONObject(i) ?: continue
+                        val rawName = item.optString("name", item.optString("plant", "")).trim()
+                        val cat = item.optString("category", "").trim()
+                        val wStr = cleanNumber(item.optString("wholesale", item.optString("wholesalePrice", "")))
+                        val rStr = cleanNumber(item.optString("retail", item.optString("retailPrice", "")))
+                        val w = wStr.toDoubleOrNull() ?: item.optDouble("wholesale", item.optDouble("wholesalePrice", 0.0))
+                        val r = rStr.toDoubleOrNull() ?: item.optDouble("retail", item.optDouble("retailPrice", 0.0))
+                        val nameMissing = rawName.isBlank() || rawName == "?"
+                        val name = if (rawName == "?") "" else rawName
+                        val hasPrice = (w > 0.0 || r > 0.0)
+                        val isValid = !nameMissing && hasPrice
+                        val status = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
+                        list.add(
+                            ParsedRateRow(
+                                name = name,
+                                category = cat,
+                                wholesalePrice = w,
+                                retailPrice = r,
+                                isValid = isValid,
+                                statusNote = status
+                            )
+                        )
+                    }
+                    list
+                } else null
+            }.getOrNull()
+            if (!jsonRows.isNullOrEmpty()) {
+                return jsonRows
+            }
+        }
+
+        // 2. Line parsing
         val lines = stripped.lines().map { it.trim() }.filter { it.isNotBlank() }
         val results = mutableListOf<ParsedRateRow>()
+        val headerWords = listOf("plant", "name", "wholesale", "retail", "rate", "price", "item", "नाम", "थोक", "खुदरा", "फुटकर", "रेट", "भाव")
 
         for (rawLine in lines) {
             val line = normalizeDigits(rawLine)
-            if (line.startsWith("#") || line.startsWith("|---") || line.equals("name | wholesale | retail", ignoreCase = true)) {
+
+            // Skip code-fence language lines
+            if (line.startsWith("```")) continue
+
+            // Skip markdown separator lines (only |, -, :, and spaces)
+            if (line.matches(Regex("""^[\s|\-:]+$"""))) continue
+
+            // Skip header rows: no digit and contains at least 2 header words
+            val lower = line.lowercase()
+            if (line.none { it.isDigit() } && headerWords.count { lower.contains(it) } >= 2) {
                 continue
             }
 
-            // Strip leading numbering: "1.", "1)", "1 -", etc.
+            // Strip leading numbering: "1.", "1)", "1 -", "1:", etc.
             val cleanedNumbering = line.replace(Regex("""^\s*\d+[\.\)\-:]\s*"""), "").trim()
             if (cleanedNumbering.isBlank()) continue
 
             // Check pipe separated: <plant name> | <wholesale rate> | <retail rate>
             if (cleanedNumbering.contains("|")) {
-                val parts = cleanedNumbering.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+                var pipeLine = cleanedNumbering
+                if (pipeLine.startsWith("|")) pipeLine = pipeLine.removePrefix("|")
+                if (pipeLine.endsWith("|")) pipeLine = pipeLine.removeSuffix("|")
+                val parts = pipeLine.split("|").map { it.trim() }
                 if (parts.size >= 3) {
-                    val name = parts[0]
+                    val rawName = parts[0]
                     val w = cleanNumber(parts[1]).toDoubleOrNull() ?: 0.0
                     val r = cleanNumber(parts[2]).toDoubleOrNull() ?: 0.0
-                    val isValid = r > 0.0 || w > 0.0
+                    val nameMissing = rawName.isBlank() || rawName == "?"
+                    val name = if (rawName == "?") "" else rawName
+                    val hasPrice = (w > 0.0 || r > 0.0)
+                    val isValid = !nameMissing && hasPrice
+                    val status = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
                     results.add(
                         ParsedRateRow(
                             name = name,
                             wholesalePrice = w,
                             retailPrice = r,
                             isValid = isValid,
-                            statusNote = if (!isValid) "Missing price" else ""
+                            statusNote = status
                         )
                     )
                     continue
                 } else if (parts.size == 2) {
-                    val name = parts[0]
+                    val rawName = parts[0]
                     val price = cleanNumber(parts[1]).toDoubleOrNull() ?: 0.0
-                    val isValid = price > 0.0
+                    val nameMissing = rawName.isBlank() || rawName == "?"
+                    val name = if (rawName == "?") "" else rawName
+                    val hasPrice = price > 0.0
+                    val isValid = !nameMissing && hasPrice
+                    val status = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
                     results.add(
                         ParsedRateRow(
                             name = name,
                             wholesalePrice = 0.0,
                             retailPrice = price,
                             isValid = isValid,
-                            statusNote = if (!isValid) "Missing price" else ""
+                            statusNote = status
                         )
                     )
                     continue
@@ -388,33 +456,41 @@ object AiTextParser {
             // Tab or comma separated
             val separator = if (cleanedNumbering.contains("\t")) "\t" else if (cleanedNumbering.contains(",")) "," else null
             if (separator != null) {
-                val parts = cleanedNumbering.split(separator).map { it.trim() }.filter { it.isNotEmpty() }
+                val parts = cleanedNumbering.split(separator).map { it.trim() }
                 if (parts.size >= 3) {
-                    val name = parts[0]
+                    val rawName = parts[0]
                     val w = cleanNumber(parts[1]).toDoubleOrNull() ?: 0.0
                     val r = cleanNumber(parts[2]).toDoubleOrNull() ?: 0.0
-                    val isValid = r > 0.0 || w > 0.0
+                    val nameMissing = rawName.isBlank() || rawName == "?"
+                    val name = if (rawName == "?") "" else rawName
+                    val hasPrice = (w > 0.0 || r > 0.0)
+                    val isValid = !nameMissing && hasPrice
+                    val status = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
                     results.add(
                         ParsedRateRow(
                             name = name,
                             wholesalePrice = w,
                             retailPrice = r,
                             isValid = isValid,
-                            statusNote = if (!isValid) "Missing price" else ""
+                            statusNote = status
                         )
                     )
                     continue
                 } else if (parts.size == 2) {
-                    val name = parts[0]
+                    val rawName = parts[0]
                     val price = cleanNumber(parts[1]).toDoubleOrNull() ?: 0.0
-                    val isValid = price > 0.0
+                    val nameMissing = rawName.isBlank() || rawName == "?"
+                    val name = if (rawName == "?") "" else rawName
+                    val hasPrice = price > 0.0
+                    val isValid = !nameMissing && hasPrice
+                    val status = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
                     results.add(
                         ParsedRateRow(
                             name = name,
                             wholesalePrice = 0.0,
                             retailPrice = price,
                             isValid = isValid,
-                            statusNote = if (!isValid) "Missing price" else ""
+                            statusNote = status
                         )
                     )
                     continue
@@ -428,24 +504,36 @@ object AiTextParser {
                 val secondLastToken = if (tokens.size >= 3) cleanNumber(tokens[tokens.size - 2]).toDoubleOrNull() else null
 
                 if (lastToken != null && secondLastToken != null && tokens.size >= 3) {
-                    val name = tokens.subList(0, tokens.size - 2).joinToString(" ")
+                    val rawName = tokens.subList(0, tokens.size - 2).joinToString(" ").trim()
+                    val nameMissing = rawName.isBlank() || rawName == "?"
+                    val name = if (rawName == "?") "" else rawName
+                    val hasPrice = (secondLastToken > 0.0 || lastToken > 0.0)
+                    val isValid = !nameMissing && hasPrice
+                    val status = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
                     results.add(
                         ParsedRateRow(
                             name = name,
                             wholesalePrice = secondLastToken,
                             retailPrice = lastToken,
-                            isValid = true
+                            isValid = isValid,
+                            statusNote = status
                         )
                     )
                     continue
                 } else if (lastToken != null) {
-                    val name = tokens.subList(0, tokens.size - 1).joinToString(" ")
+                    val rawName = tokens.subList(0, tokens.size - 1).joinToString(" ").trim()
+                    val nameMissing = rawName.isBlank() || rawName == "?"
+                    val name = if (rawName == "?") "" else rawName
+                    val hasPrice = lastToken > 0.0
+                    val isValid = !nameMissing && hasPrice
+                    val status = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
                     results.add(
                         ParsedRateRow(
                             name = name,
                             wholesalePrice = 0.0,
                             retailPrice = lastToken,
-                            isValid = true
+                            isValid = isValid,
+                            statusNote = status
                         )
                     )
                     continue
@@ -453,13 +541,16 @@ object AiTextParser {
             }
 
             // Unparseable row: mark invalid with missing price so user can type it or uncheck
+            val rawName = cleanedNumbering.trim()
+            val nameMissing = rawName.isBlank() || rawName == "?"
+            val name = if (rawName == "?") "" else rawName
             results.add(
                 ParsedRateRow(
-                    name = cleanedNumbering,
+                    name = name,
                     wholesalePrice = 0.0,
                     retailPrice = 0.0,
                     isValid = false,
-                    statusNote = "Missing price"
+                    statusNote = if (nameMissing) "Name missing" else "Missing price"
                 )
             )
         }

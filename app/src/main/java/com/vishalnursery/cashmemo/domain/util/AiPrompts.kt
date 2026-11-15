@@ -1,5 +1,6 @@
 package com.vishalnursery.cashmemo.domain.util
 
+import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 
 object AiPrompts {
@@ -41,30 +42,31 @@ Rules:
 """.trimIndent()
     }
 
-    fun getRateListPrompt(mode: TranslationMode): String {
-        val translationRule = when (mode) {
-            TranslationMode.ENGLISH_WITH_HINDI ->
-                "Write every plant name in English followed by the original Hindi in brackets: English name (हिंदी नाम). If it is already English, keep clean English."
-            TranslationMode.ENGLISH_ONLY ->
-                "Translate every plant name into clear English."
-            TranslationMode.ORIGINAL ->
-                "Keep every plant name exactly as written, in its original script. Do not translate."
+    fun getRateListPrompt(style: RateNameStyle): String {
+        val nameRule = when (style) {
+            RateNameStyle.ROMAN_WITH_HINDI ->
+                "Write each plant name as: <Roman name> (<original Hindi>). The Roman name is a transliteration: how the Hindi word sounds, written in English letters the way an Indian shopkeeper would type it on a phone. Do NOT translate it into English. If the paper already shows an English or Roman name, keep it exactly and add no brackets."
+            RateNameStyle.ENGLISH_WITH_HINDI ->
+                "Write each plant name as: <common English name> (<original Hindi>). If the paper already shows an English name, keep it and add no brackets."
+            RateNameStyle.AS_WRITTEN ->
+                "Copy each plant name exactly as written, in its own script. Do not translate or transliterate."
         }
 
         return """
-You are reading a photo of a nursery plant rate list or price board (Hindi, Hinglish or English).
-Read EVERY line carefully. Do not skip, merge, guess or invent anything.
+You are reading a photo of a handwritten or printed plant price list from a nursery (Hindi, Hinglish or English). It may be a ruled table with a header row, or numbered lines. There can be up to 50 rows.
+Read EVERY row from top to bottom. Do not skip, merge, guess or invent anything. Write ? for any word or number you cannot read.
 
 Reply with ONE plain-text code block and nothing else, one plant per line, in exactly this layout:
 
 <plant name> | <wholesale rate> | <retail rate>
-<plant name> | <wholesale rate> | <retail rate>
 
 Rules:
-- Drop the line number. Keep the plant name as written, handled per the rule below.
-- Rates are plain numbers: digits 0-9 only, no currency sign, no commas.
-- If a line has only one price, put it in the retail position and leave wholesale empty.
-- $translationRule
+- Do NOT output the header row, ruled lines, line numbers or any commentary.
+- Use the column headings on the paper to decide which price is wholesale and which is retail. If there are no headings, the first price is wholesale and the second is retail.
+- Always write wholesale first and retail second, even if the paper shows them the other way round.
+- Rates are plain numbers: digits 0-9 only, no currency sign, no commas. Convert Devanagari digits to 0-9. Look closely at handwritten digits (1 and 7, 3 and 8, 5 and 6, 0 and 9 are easy to confuse).
+- If a row has only one price, put it in the retail position and leave the wholesale position empty, keeping both | separators.
+- $nameRule
 """.trimIndent()
     }
 }

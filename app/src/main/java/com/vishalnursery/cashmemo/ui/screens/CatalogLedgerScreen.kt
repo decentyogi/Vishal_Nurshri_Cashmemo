@@ -1,12 +1,19 @@
 package com.vishalnursery.cashmemo.ui.screens
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -18,10 +25,12 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,19 +51,18 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DocumentScanner
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Payments
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sort
-import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -69,7 +77,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -95,33 +102,44 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.vishalnursery.cashmemo.data.repository.PlantRateImportPolicy
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.PlantRate
+import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.util.AiPrompts
 import com.vishalnursery.cashmemo.domain.util.AiTextParser
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
+import com.vishalnursery.cashmemo.domain.util.PlantNameMatcher
 import com.vishalnursery.cashmemo.ui.components.AiPasteSheet
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
+import com.vishalnursery.cashmemo.ui.viewmodel.RateReviewSource
+import com.vishalnursery.cashmemo.ui.viewmodel.RateScanUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -141,6 +159,19 @@ fun CatalogLedgerScreen(
     memos: List<CashMemo>,
     plantRates: List<PlantRate>,
     settings: BusinessSettings,
+    rateScan: RateScanUiState,
+    onSelectScanEngine: (ScanEngine) -> Unit,
+    onSelectRateNameStyle: (RateNameStyle) -> Unit,
+    onScanRateImage: (Uri) -> Unit,
+    onOpenRatePaste: (String?) -> Unit,
+    onCloseRatePaste: () -> Unit,
+    onUpdateRatePasteText: (String) -> Unit,
+    onSubmitRatePaste: () -> Unit,
+    onFileRatesParsed: (List<ParsedRateRow>) -> Unit,
+    onDismissRateReview: () -> Unit,
+    onConfirmRateImport: (List<PlantRate>, PlantRateImportPolicy) -> Unit,
+    onClearRateScanError: () -> Unit,
+    onOpenSettings: () -> Unit,
     onSaveCustomer: (CustomerProfile) -> Unit,
     onSettleCustomerDue: (String, Double, String) -> Unit,
     onDeleteCustomer: (String) -> Unit,
@@ -153,7 +184,6 @@ fun CatalogLedgerScreen(
     onDeletePlantRate: (String) -> Unit,
     onExportPlantRatesJson: () -> Unit = {},
     onExportPlantRatesCsv: () -> Unit = {},
-    onImportPlantRates: (List<PlantRate>, PlantRateImportPolicy) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -170,17 +200,6 @@ fun CatalogLedgerScreen(
     var showPlantRateDialog by remember { mutableStateOf(false) }
     var deletingPlantRate by remember { mutableStateOf<PlantRate?>(null) }
 
-    // Rate Import & Scan Review Dialog
-    var pendingImportRates by remember { mutableStateOf<List<ParsedRateRow>?>(null) }
-    var showImportMenu by remember { mutableStateOf(false) }
-    var showExportMenu by remember { mutableStateOf(false) }
-
-    // Scan Rate List flow
-    var isScanningRateList by remember { mutableStateOf(false) }
-    var scanRateListImageUri by remember { mutableStateOf<String?>(null) }
-    var isRateAiPasteOpen by remember { mutableStateOf(false) }
-    var rateAiPasteText by remember { mutableStateOf("") }
-
     // File Import launcher (JSON / CSV)
     val fileImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -189,44 +208,58 @@ fun CatalogLedgerScreen(
             coroutineScope.launch {
                 val parsed = parsePlantRatesFromUri(context, uri)
                 if (parsed.isNotEmpty()) {
-                    pendingImportRates = parsed
+                    onFileRatesParsed(parsed)
                 }
             }
         }
     }
 
-    // Rate list photo launcher
-    val ratePhotoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+    // Camera & Gallery launchers
+    val photoFile = remember { File(context.cacheDir, "rate_list_capture.jpg") }
+    val photoUri = remember {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            scanRateListImageUri = uri.toString()
-            if (settings.scanEngine == ScanEngine.OTHER_AI) {
-                isRateAiPasteOpen = true
-            } else {
-                // If Gemini, scan directly
-                isScanningRateList = true
-                coroutineScope.launch(Dispatchers.IO) {
-                    val result = runCatching {
-                        val service = com.vishalnursery.cashmemo.data.ocr.GeminiVisionService(context)
-                        service.analyzeRateList(
-                            uri = uri,
-                            apiKey = settings.geminiApiKey,
-                            preferredModel = settings.geminiModel,
-                            translationMode = settings.translationMode
-                        ).getOrThrow()
-                    }
-                    withContext(Dispatchers.Main) {
-                        isScanningRateList = false
-                        result.onSuccess { rows ->
-                            pendingImportRates = rows
-                        }.onFailure {
-                            // On failure, open AI paste sheet as fallback
-                            isRateAiPasteOpen = true
-                        }
-                    }
-                }
+            onScanRateImage(uri)
+        }
+    }
+
+    val takePhotoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            onScanRateImage(photoUri)
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            try {
+                takePhotoLauncher.launch(photoUri)
+            } catch (e: Exception) {
+                galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             }
+        } else {
+            galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        }
+    }
+
+    fun launchCamera() {
+        val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        if (hasPermission) {
+            try {
+                takePhotoLauncher.launch(photoUri)
+            } catch (e: Exception) {
+                galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
@@ -281,6 +314,9 @@ fun CatalogLedgerScreen(
                 onSavePlantRate(savedRate)
                 showPlantRateDialog = false
                 plantRateDialogTarget = null
+            },
+            onDelete = { target ->
+                deletingPlantRate = target
             }
         )
     }
@@ -310,46 +346,53 @@ fun CatalogLedgerScreen(
         )
     }
 
-    // Modal: Rate Import / Scan Review Dialog
-    pendingImportRates?.let { rows ->
+    // Modal: Rate Import / Scan Review Dialog (Part 8)
+    rateScan.pendingRows?.let { rows ->
         RateImportReviewDialog(
             parsedRows = rows,
+            source = rateScan.pendingSource,
+            imageUri = rateScan.imageUri,
             existingRates = plantRates,
             currencySymbol = settings.currencySymbol,
-            onDismiss = { pendingImportRates = null },
-            onApply = { approvedRates, policy ->
-                onImportPlantRates(approvedRates, policy)
-                pendingImportRates = null
-            }
+            onDismiss = onDismissRateReview,
+            onApply = onConfirmRateImport
         )
     }
 
-    // Modal: AI Paste Sheet for Rate List
-    if (isRateAiPasteOpen) {
+    // Modal: AI Paste Sheet for Rate List (Part 6)
+    if (rateScan.isPasteOpen) {
         AiPasteSheet(
-            title = "Paste Rate List from AI",
-            promptText = AiPrompts.getRateListPrompt(settings.translationMode),
-            hint = "Paste plant rate lines (e.g. Mango | 100 | 150)...",
+            title = "Rate list from another AI",
+            promptText = AiPrompts.getRateListPrompt(settings.rateNameStyle),
+            hint = "Paste the AI's reply here",
             liveStatus = { text ->
                 if (text.isBlank()) null
                 else {
                     val parsed = AiTextParser.parseRateList(text)
-                    if (parsed.isNotEmpty()) "${parsed.size} plants detected" else "No plants detected yet"
+                    val needPrice = parsed.count { it.wholesalePrice == 0.0 && it.retailPrice == 0.0 }
+                    if (parsed.isNotEmpty()) {
+                        "${parsed.size} plants found" + (if (needPrice > 0) " - $needPrice need a price" else "")
+                    } else {
+                        "No plants detected yet"
+                    }
                 }
             },
-            onSubmit = { text ->
-                val parsed = AiTextParser.parseRateList(text)
-                isRateAiPasteOpen = false
-                rateAiPasteText = ""
-                pendingImportRates = parsed
+            onSubmit = { onSubmitRatePaste() },
+            onDismiss = onCloseRatePaste,
+            imageUri = rateScan.imageUri,
+            onPickImage = {
+                galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
-            onDismiss = { isRateAiPasteOpen = false },
-            imageUri = scanRateListImageUri,
-            onPickImage = { ratePhotoLauncher.launch("image/*") },
             currentTranslationMode = settings.translationMode,
             onSelectTranslationMode = {},
-            pastedText = rateAiPasteText,
-            onPastedTextChanged = { rateAiPasteText = it }
+            chipsCaption = "Plant names:",
+            chipLabels = RateNameStyle.entries.map { it.label },
+            selectedChipIndex = RateNameStyle.entries.indexOf(settings.rateNameStyle),
+            onSelectChip = { onSelectRateNameStyle(RateNameStyle.entries[it]) },
+            readyCheck = { AiTextParser.parseRateList(it).isNotEmpty() },
+            submitLabel = "Review rates",
+            pastedText = rateScan.pasteText,
+            onPastedTextChanged = onUpdateRatePasteText
         )
     }
 
@@ -431,7 +474,12 @@ fun CatalogLedgerScreen(
                 1 -> PlantRatesTabPage(
                     plantRates = plantRates,
                     settings = settings,
-                    isScanning = isScanningRateList,
+                    rateScan = rateScan,
+                    onSelectScanEngine = onSelectScanEngine,
+                    onSelectRateNameStyle = onSelectRateNameStyle,
+                    onOpenRatePaste = onOpenRatePaste,
+                    onClearRateScanError = onClearRateScanError,
+                    onOpenSettings = onOpenSettings,
                     onAddPlant = {
                         plantRateDialogTarget = null
                         showPlantRateDialog = true
@@ -440,67 +488,13 @@ fun CatalogLedgerScreen(
                         plantRateDialogTarget = rate
                         showPlantRateDialog = true
                     },
-                    onDeletePlant = { rate ->
-                        deletingPlantRate = rate
+                    onTakePhoto = { launchCamera() },
+                    onChooseGallery = {
+                        galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
-                    onImportClick = { showImportMenu = true },
-                    onExportClick = { showExportMenu = true }
-                )
-            }
-        }
-
-        // Import & Export Dropdown Menus anchored
-        Box {
-            DropdownMenu(
-                expanded = showImportMenu,
-                onDismissRequest = { showImportMenu = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Import from File (JSON / CSV)") },
-                    leadingIcon = { Icon(Icons.Default.FileUpload, contentDescription = null) },
-                    onClick = {
-                        showImportMenu = false
-                        fileImportLauncher.launch("*/*")
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Scan Rate List (Photo / Image)") },
-                    leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null) },
-                    onClick = {
-                        showImportMenu = false
-                        ratePhotoLauncher.launch("image/*")
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Paste AI Rate Text") },
-                    leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) },
-                    onClick = {
-                        showImportMenu = false
-                        scanRateListImageUri = null
-                        isRateAiPasteOpen = true
-                    }
-                )
-            }
-
-            DropdownMenu(
-                expanded = showExportMenu,
-                onDismissRequest = { showExportMenu = false }
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Export Rates as CSV (Excel compatible)") },
-                    leadingIcon = { Icon(Icons.Default.ArrowUpward, contentDescription = null) },
-                    onClick = {
-                        showExportMenu = false
-                        onExportPlantRatesCsv()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Export Rates as JSON") },
-                    leadingIcon = { Icon(Icons.Default.ArrowUpward, contentDescription = null) },
-                    onClick = {
-                        showExportMenu = false
-                        onExportPlantRatesJson()
-                    }
+                    onImportFile = { fileImportLauncher.launch("*/*") },
+                    onExportCsv = onExportPlantRatesCsv,
+                    onExportJson = onExportPlantRatesJson
                 )
             }
         }
@@ -551,17 +545,24 @@ private fun CustomersTabPage(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlantRatesTabPage(
     plantRates: List<PlantRate>,
     settings: BusinessSettings,
-    isScanning: Boolean,
+    rateScan: RateScanUiState,
+    onSelectScanEngine: (ScanEngine) -> Unit,
+    onSelectRateNameStyle: (RateNameStyle) -> Unit,
+    onOpenRatePaste: (String?) -> Unit,
+    onClearRateScanError: () -> Unit,
+    onOpenSettings: () -> Unit,
     onAddPlant: () -> Unit,
     onEditPlant: (PlantRate) -> Unit,
-    onDeletePlant: (PlantRate) -> Unit,
-    onImportClick: () -> Unit,
-    onExportClick: () -> Unit
+    onTakePhoto: () -> Unit,
+    onChooseGallery: () -> Unit,
+    onImportFile: () -> Unit,
+    onExportCsv: () -> Unit,
+    onExportJson: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("All") }
@@ -588,111 +589,105 @@ private fun PlantRatesTabPage(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(12.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Action Bar: [+ Add Plant], [Import], [Export]
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Button(
-                onClick = onAddPlant,
-                colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.weight(1.3f).height(44.dp)
+        // 1. Action Row
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Add Plant", maxLines = 1, softWrap = false)
-            }
-
-            OutlinedButton(
-                onClick = onImportClick,
-                shape = RoundedCornerShape(20.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                modifier = Modifier.weight(1f).height(44.dp)
-            ) {
-                Icon(Icons.Default.ArrowDownward, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Import", maxLines = 1, softWrap = false)
-            }
-
-            OutlinedButton(
-                onClick = onExportClick,
-                shape = RoundedCornerShape(20.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                modifier = Modifier.weight(1f).height(44.dp)
-            ) {
-                Icon(Icons.Default.ArrowUpward, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Export", maxLines = 1, softWrap = false)
-            }
-        }
-
-        if (isScanning) {
-            Surface(
-                color = NurseryColors.GreenSoft,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text("Scanning plant rate list with AI...", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
-        // Search Bar + Sort Menu
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search plants...", fontSize = 13.sp) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp))
-                        }
+                Box(modifier = Modifier.weight(1f)) {
+                    Button(
+                        onClick = onAddPlant,
+                        colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Add Plant", maxLines = 1, softWrap = false)
                     }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(1f).height(50.dp)
-            )
-
-            Box {
-                OutlinedButton(
-                    onClick = { showSortMenu = true },
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    modifier = Modifier.height(50.dp)
-                ) {
-                    Icon(Icons.Default.Sort, contentDescription = "Sort")
                 }
-                DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
-                    PlantRateSortOrder.entries.forEach { order ->
+
+                var scanMenuOpen by remember { mutableStateOf(false) }
+                Box(modifier = Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { scanMenuOpen = true },
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Scan list", maxLines = 1, softWrap = false)
+                    }
+                    DropdownMenu(
+                        expanded = scanMenuOpen,
+                        onDismissRequest = { scanMenuOpen = false }
+                    ) {
                         DropdownMenuItem(
-                            text = { Text(order.label) },
-                            trailingIcon = {
-                                if (sortOrder == order) Icon(Icons.Default.Check, contentDescription = null)
-                            },
+                            text = { Text("Take photo") },
+                            leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null) },
                             onClick = {
-                                sortOrder = order
-                                showSortMenu = false
+                                scanMenuOpen = false
+                                onTakePhoto()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Choose from gallery") },
+                            leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },
+                            onClick = {
+                                scanMenuOpen = false
+                                onChooseGallery()
+                            }
+                        )
+                    }
+                }
+
+                var fileMenuOpen by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(
+                        onClick = { fileMenuOpen = true },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More actions", tint = NurseryColors.DarkInk)
+                    }
+                    DropdownMenu(
+                        expanded = fileMenuOpen,
+                        onDismissRequest = { fileMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Import from file (JSON / CSV)") },
+                            leadingIcon = { Icon(Icons.Default.FileUpload, contentDescription = null) },
+                            onClick = {
+                                fileMenuOpen = false
+                                onImportFile()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Export CSV (Excel)") },
+                            leadingIcon = { Icon(Icons.Default.ArrowUpward, contentDescription = null) },
+                            onClick = {
+                                fileMenuOpen = false
+                                onExportCsv()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Export JSON") },
+                            leadingIcon = { Icon(Icons.Default.ArrowUpward, contentDescription = null) },
+                            onClick = {
+                                fileMenuOpen = false
+                                onExportJson()
                             }
                         )
                     }
@@ -700,57 +695,410 @@ private fun PlantRatesTabPage(
             }
         }
 
-        // Category Filter Chips
-        if (distinctCategories.size > 2) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                distinctCategories.forEach { category ->
-                    FilterChip(
-                        selected = selectedCategory == category,
-                        onClick = { selectedCategory = category },
-                        label = { Text(category, fontSize = 12.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = NurseryColors.GreenSoft,
-                            selectedLabelColor = NurseryColors.GreenHeader
+        // 2. Engine Strip
+        item {
+            RateEngineStrip(
+                scanEngine = settings.scanEngine,
+                onSelectScanEngine = onSelectScanEngine,
+                onOpenRatePaste = { onOpenRatePaste(null) },
+                currentStyle = settings.rateNameStyle,
+                onSelectStyle = onSelectRateNameStyle
+            )
+        }
+
+        // 3. Animated Status Card
+        item {
+            if (rateScan.isScanning) {
+                Surface(
+                    color = NurseryColors.GreenSoft,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, NurseryColors.BotanicalGreen),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(
+                            text = "Gemini is reading your rate list...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NurseryColors.DarkInk
                         )
+                    }
+                }
+            } else if (rateScan.errorMessage != null) {
+                Surface(
+                    color = NurseryColors.WarningSoft,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, NurseryColors.WarningHeader),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = NurseryColors.WarningHeader, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = rateScan.errorMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = NurseryColors.DarkInk,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = { onOpenRatePaste(rateScan.imageUri) },
+                                colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Text("Use another AI", fontSize = 12.sp)
+                            }
+
+                            if (rateScan.errorMessage.contains("Settings", ignoreCase = true) ||
+                                rateScan.errorMessage.contains("API key", ignoreCase = true)
+                            ) {
+                                OutlinedButton(
+                                    onClick = onOpenSettings,
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text("Open Settings", fontSize = 12.sp)
+                                }
+                            }
+
+                            TextButton(
+                                onClick = onClearRateScanError,
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Text("Dismiss", color = NurseryColors.MutedInk, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Sticky Header: Search + Sort + Category Chips + Count Line
+        stickyHeader {
+            Surface(
+                color = NurseryColors.CreamBackground,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search plants...", fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 56.dp)
+                        )
+
+                        Box {
+                            OutlinedButton(
+                                onClick = { showSortMenu = true },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                                modifier = Modifier.height(56.dp)
+                            ) {
+                                Icon(Icons.Default.Sort, contentDescription = "Sort")
+                            }
+                            DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                                PlantRateSortOrder.entries.forEach { order ->
+                                    DropdownMenuItem(
+                                        text = { Text(order.label) },
+                                        trailingIcon = {
+                                            if (sortOrder == order) Icon(Icons.Default.Check, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            sortOrder = order
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (distinctCategories.size > 2) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            distinctCategories.forEach { category ->
+                                FilterChip(
+                                    selected = selectedCategory == category,
+                                    onClick = { selectedCategory = category },
+                                    label = { Text(category, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = NurseryColors.GreenSoft,
+                                        selectedLabelColor = NurseryColors.GreenHeader
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    if (plantRates.isNotEmpty()) {
+                        Text(
+                            text = "${filteredRates.size} plants",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NurseryColors.MutedInk
+                        )
+                    }
+                }
+            }
+        }
+
+        // 5. Plant Rate Cards or Empty State
+        if (filteredRates.isEmpty()) {
+            item {
+                if (plantRates.isEmpty()) {
+                    EmptyRateListState(
+                        onScan = onTakePhoto,
+                        onPaste = { onOpenRatePaste(null) },
+                        onImport = onImportFile,
+                        onAdd = onAddPlant
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No plants match '$searchQuery'.", style = MaterialTheme.typography.bodyMedium, color = NurseryColors.MutedInk)
+                    }
+                }
+            }
+        } else {
+            items(filteredRates, key = { it.id }) { rate ->
+                PlantRateCard(
+                    rate = rate,
+                    currencySymbol = settings.currencySymbol,
+                    onEdit = { onEditPlant(rate) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RateEngineStrip(
+    scanEngine: ScanEngine,
+    onSelectScanEngine: (ScanEngine) -> Unit,
+    onOpenRatePaste: () -> Unit,
+    currentStyle: RateNameStyle,
+    onSelectStyle: (RateNameStyle) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Gemini | Other AI segmented pill
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = NurseryColors.CreamBackground,
+            border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
+        ) {
+            Row(modifier = Modifier.padding(2.dp)) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (scanEngine == ScanEngine.GEMINI) NurseryColors.Maroon else Color.Transparent,
+                    onClick = { onSelectScanEngine(ScanEngine.GEMINI) }
+                ) {
+                    Text(
+                        text = "Gemini",
+                        color = if (scanEngine == ScanEngine.GEMINI) Color.White else NurseryColors.DarkInk,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (scanEngine == ScanEngine.OTHER_AI) NurseryColors.Maroon else Color.Transparent,
+                    onClick = { onSelectScanEngine(ScanEngine.OTHER_AI) }
+                ) {
+                    Text(
+                        text = "Other AI",
+                        color = if (scanEngine == ScanEngine.OTHER_AI) Color.White else NurseryColors.DarkInk,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                 }
             }
         }
 
-        // Count Summary
-        Text(
-            text = "Showing ${filteredRates.size} of ${plantRates.size} plants",
-            style = MaterialTheme.typography.labelSmall,
-            color = NurseryColors.MutedInk
+        // Outlined pill: Paste AI text
+        OutlinedButton(
+            onClick = onOpenRatePaste,
+            shape = RoundedCornerShape(20.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier.height(36.dp)
+        ) {
+            Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Paste AI text", fontSize = 12.sp)
+        }
+
+        Icon(
+            imageVector = Icons.Default.Translate,
+            contentDescription = null,
+            tint = NurseryColors.MutedInk,
+            modifier = Modifier.size(18.dp)
         )
 
-        // Plant Rate Cards List
-        if (filteredRates.isEmpty()) {
-            EmptyLedgerNotice(
-                if (plantRates.isEmpty())
-                    "No plant rates added yet. Add plants or scan a rate list to use instant autocomplete."
-                else
-                    "No plants match '$searchQuery'."
+        // Filter chips for RateNameStyle
+        RateNameStyle.entries.forEach { style ->
+            FilterChip(
+                selected = currentStyle == style,
+                onClick = { onSelectStyle(style) },
+                label = { Text(style.label, fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = NurseryColors.GreenSoft,
+                    selectedLabelColor = NurseryColors.GreenHeader
+                )
             )
-        } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth().weight(1f)
+        }
+    }
+}
+
+@Composable
+private fun EmptyRateListState(
+    onScan: () -> Unit,
+    onPaste: () -> Unit,
+    onImport: () -> Unit,
+    onAdd: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "No plant rates yet",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = NurseryColors.DarkInk
+            )
+            Text(
+                text = "Add or scan your nursery price list to get instant autocomplete while billing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = NurseryColors.MutedInk,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            EmptyOptionRow(
+                icon = Icons.Default.CameraAlt,
+                title = "Scan a rate list",
+                subtitle = "Take a photo or choose from gallery",
+                onClick = onScan
+            )
+            EmptyOptionRow(
+                icon = Icons.Default.ContentPaste,
+                title = "Paste AI text",
+                subtitle = "Paste rates from ChatGPT, Gemini, or Claude",
+                onClick = onPaste
+            )
+            EmptyOptionRow(
+                icon = Icons.Default.FileUpload,
+                title = "Import a file",
+                subtitle = "Load prices from JSON or CSV",
+                onClick = onImport
+            )
+            EmptyOptionRow(
+                icon = Icons.Default.Add,
+                title = "Add manually",
+                subtitle = "Type plant name, wholesale and retail price",
+                onClick = onAdd
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyOptionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = NurseryColors.PaperSurface,
+        border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = NurseryColors.MaroonLight,
+                modifier = Modifier.size(36.dp)
             ) {
-                items(filteredRates, key = { it.id }) { rate ->
-                    PlantRateCard(
-                        rate = rate,
-                        currencySymbol = settings.currencySymbol,
-                        onEdit = { onEditPlant(rate) },
-                        onDelete = { onDeletePlant(rate) }
-                    )
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, tint = NurseryColors.Maroon, modifier = Modifier.size(18.dp))
                 }
             }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, color = NurseryColors.DarkInk)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = NurseryColors.MutedInk)
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = NurseryColors.MutedInk)
         }
     }
 }
@@ -759,8 +1107,7 @@ private fun PlantRatesTabPage(
 private fun PlantRateCard(
     rate: PlantRate,
     currencySymbol: String,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onEdit: () -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
@@ -768,21 +1115,29 @@ private fun PlantRateCard(
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 2.dp)
             .clickable(onClick = onEdit)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(rate.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = NurseryColors.DarkInk)
+                Text(
+                    text = rate.name,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = NurseryColors.DarkInk
+                )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(top = 2.dp)
+                    modifier = Modifier.padding(top = 4.dp)
                 ) {
                     if (rate.category.isNotBlank()) {
                         Surface(
@@ -809,32 +1164,35 @@ private fun PlantRateCard(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(horizontalAlignment = Alignment.End) {
+            Spacer(Modifier.width(8.dp))
+
+            Column(horizontalAlignment = Alignment.End) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "R: ${IndianCurrencyFormatter.formatInr(rate.retailPrice, currencySymbol)}",
+                        text = "Wholesale: ",
+                        fontSize = 11.sp,
+                        color = NurseryColors.MutedInk
+                    )
+                    Text(
+                        text = IndianCurrencyFormatter.formatInr(rate.wholesalePrice, currencySymbol),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NurseryColors.BotanicalGreen
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                    Text(
+                        text = "Retail: ",
+                        fontSize = 11.sp,
+                        color = NurseryColors.MutedInk
+                    )
+                    Text(
+                        text = IndianCurrencyFormatter.formatInr(rate.retailPrice, currencySymbol),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = NurseryColors.Maroon
-                    )
-                    Text(
-                        text = "W: ${IndianCurrencyFormatter.formatInr(rate.wholesalePrice, currencySymbol)}",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        color = NurseryColors.GreenHeader
-                    )
-                }
-
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = NurseryColors.DueRed.copy(alpha = 0.8f),
-                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -849,10 +1207,11 @@ private fun PlantRateDialog(
     allRates: List<PlantRate>,
     currencySymbol: String,
     onDismiss: () -> Unit,
-    onSave: (PlantRate) -> Unit
+    onSave: (PlantRate) -> Unit,
+    onDelete: (PlantRate) -> Unit
 ) {
     var name by remember(initial) { mutableStateOf(initial?.name ?: "") }
-    var category by remember(initial) { mutableStateOf(initial?.category ?: "Plants") }
+    var category by remember(initial) { mutableStateOf(initial?.category ?: "") }
     var retailText by remember(initial) {
         mutableStateOf(if ((initial?.retailPrice ?: 0.0) > 0.0) initial!!.retailPrice.toString() else "")
     }
@@ -867,10 +1226,10 @@ private fun PlantRateDialog(
     }
 
     val existingCategories = remember(allRates) {
-        allRates.map { it.category.trim() }.filter { it.isNotBlank() && it != "Plants" }.distinct().take(6)
+        allRates.map { it.category.trim() }.filter { it.isNotBlank() }.distinct().take(6)
     }
 
-    val isValid = name.isNotBlank() && (retailText.toDoubleOrNull() ?: 0.0) > 0.0 || (wholesaleText.toDoubleOrNull() ?: 0.0) > 0.0
+    val isValid = name.isNotBlank() && ((retailText.toDoubleOrNull() ?: 0.0) > 0.0 || (wholesaleText.toDoubleOrNull() ?: 0.0) > 0.0)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -933,9 +1292,9 @@ private fun PlantRateDialog(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = retailText,
-                        onValueChange = { retailText = it },
-                        label = { Text("Retail Price ($currencySymbol)") },
+                        value = wholesaleText,
+                        onValueChange = { wholesaleText = it },
+                        label = { Text("Wholesale ($currencySymbol)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         shape = RoundedCornerShape(12.dp),
@@ -943,9 +1302,9 @@ private fun PlantRateDialog(
                     )
 
                     OutlinedTextField(
-                        value = wholesaleText,
-                        onValueChange = { wholesaleText = it },
-                        label = { Text("Wholesale ($currencySymbol)") },
+                        value = retailText,
+                        onValueChange = { retailText = it },
+                        label = { Text("Retail ($currencySymbol)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         shape = RoundedCornerShape(12.dp),
@@ -959,10 +1318,9 @@ private fun PlantRateDialog(
                 onClick = {
                     val r = retailText.toDoubleOrNull() ?: 0.0
                     val w = wholesaleText.toDoubleOrNull() ?: r
-                    val saved = PlantRate(
-                        id = initial?.id ?: "pr_${System.currentTimeMillis()}",
+                    val saved = (initial ?: PlantRate(name = name.trim())).copy(
                         name = name.trim(),
-                        category = category.trim().ifBlank { "Plants" },
+                        category = category.trim(),
                         retailPrice = r,
                         wholesalePrice = w,
                         updatedAt = System.currentTimeMillis()
@@ -976,7 +1334,19 @@ private fun PlantRateDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isEditing) {
+                    TextButton(
+                        onClick = {
+                            initial?.let { onDelete(it) }
+                            onDismiss()
+                        }
+                    ) {
+                        Text("Delete", color = NurseryColors.DueRed)
+                    }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
         }
     )
 }
@@ -984,36 +1354,103 @@ private fun PlantRateDialog(
 @Composable
 private fun RateImportReviewDialog(
     parsedRows: List<ParsedRateRow>,
+    source: RateReviewSource,
+    imageUri: String?,
     existingRates: List<PlantRate>,
     currencySymbol: String,
     onDismiss: () -> Unit,
     onApply: (List<PlantRate>, PlantRateImportPolicy) -> Unit
 ) {
     var policy by remember { mutableStateOf(PlantRateImportPolicy.ADD_NEW_AND_UPDATE_EXISTING) }
+    var isMoreOptionsOpen by remember { mutableStateOf(false) }
+    var showReplaceConfirmDialog by remember { mutableStateOf(false) }
 
-    // Track checked states and inline editable prices
-    val checkedMap = remember {
-        mutableStateMapOf<Int, Boolean>().apply {
-            parsedRows.forEachIndexed { idx, row ->
-                put(idx, row.isValid && (row.retailPrice > 0.0 || row.wholesalePrice > 0.0))
+    // Collapsible photo state
+    var showLargePhoto by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var thumbnailBitmap by remember(imageUri) { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(imageUri) {
+        if (!imageUri.isNullOrBlank()) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val uri = Uri.parse(imageUri)
+                    val stream = context.contentResolver.openInputStream(uri)
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    val bmp = BitmapFactory.decodeStream(stream, null, opts)
+                    stream?.close()
+                    bmp
+                }.getOrNull()?.let { thumbnailBitmap = it }
             }
         }
     }
 
-    val retailEdits = remember {
-        mutableStateMapOf<Int, String>().apply {
-            parsedRows.forEachIndexed { idx, row ->
-                put(idx, if (row.retailPrice > 0.0) row.retailPrice.toString() else "")
+    // Editable state keyed by row.id
+    val nameEdits = remember(parsedRows) {
+        mutableStateMapOf<String, String>().apply {
+            parsedRows.forEach { row -> put(row.id, row.name) }
+        }
+    }
+    val wholesaleEdits = remember(parsedRows) {
+        mutableStateMapOf<String, String>().apply {
+            parsedRows.forEach { row ->
+                put(row.id, if (row.wholesalePrice > 0.0) row.wholesalePrice.toString() else "")
+            }
+        }
+    }
+    val retailEdits = remember(parsedRows) {
+        mutableStateMapOf<String, String>().apply {
+            parsedRows.forEach { row ->
+                put(row.id, if (row.retailPrice > 0.0) row.retailPrice.toString() else "")
+            }
+        }
+    }
+    val categoryEdits = remember(parsedRows) {
+        mutableStateMapOf<String, String>().apply {
+            parsedRows.forEach { row -> put(row.id, row.category) }
+        }
+    }
+
+    // Initial checked state: valid rows with prices and names start checked, problems start unchecked
+    val checkedMap = remember(parsedRows) {
+        mutableStateMapOf<String, Boolean>().apply {
+            val nameCounts = parsedRows.groupingBy { PlantNameMatcher.normalize(it.name) }.eachCount()
+            parsedRows.forEach { row ->
+                val norm = PlantNameMatcher.normalize(row.name)
+                val isDup = (nameCounts[norm] ?: 0) > 1
+                val hasPrice = row.retailPrice > 0.0 || row.wholesalePrice > 0.0
+                val hasName = row.name.isNotBlank() && row.name != "?"
+                put(row.id, hasPrice && hasName && row.isValid && !isDup)
             }
         }
     }
 
-    val wholesaleEdits = remember {
-        mutableStateMapOf<Int, String>().apply {
-            parsedRows.forEachIndexed { idx, row ->
-                put(idx, if (row.wholesalePrice > 0.0) row.wholesalePrice.toString() else "")
+    // Duplicate detection in this list
+    val currentNormCounts = remember(nameEdits.values.toList()) {
+        nameEdits.values.groupingBy { PlantNameMatcher.normalize(it) }.eachCount()
+    }
+
+    // Summary counts
+    val summary = remember(nameEdits.values.toList(), wholesaleEdits.values.toList(), retailEdits.values.toList(), existingRates) {
+        var newCount = 0
+        var updateCount = 0
+        var needCheckCount = 0
+
+        parsedRows.forEach { row ->
+            val name = nameEdits[row.id] ?: ""
+            val w = wholesaleEdits[row.id]?.toDoubleOrNull() ?: 0.0
+            val r = retailEdits[row.id]?.toDoubleOrNull() ?: 0.0
+            val match = existingRates.firstOrNull { PlantNameMatcher.matches(it.name, name) }
+
+            if (name.isBlank() || (w == 0.0 && r == 0.0) || (w > r && r > 0.0)) {
+                needCheckCount++
+            } else if (match == null) {
+                newCount++
+            } else if (match.retailPrice != r || match.wholesalePrice != w) {
+                updateCount++
             }
         }
+        Triple(newCount, updateCount, needCheckCount)
     }
 
     Dialog(
@@ -1023,7 +1460,8 @@ private fun RateImportReviewDialog(
         Surface(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(12.dp)
+                .imePadding(),
             shape = RoundedCornerShape(16.dp),
             color = NurseryColors.CreamBackground
         ) {
@@ -1039,150 +1477,289 @@ private fun RateImportReviewDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Review Rate List Import", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Review Plant Rates",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = NurseryColors.DarkInk
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Text("${summary.first} new", fontSize = 11.sp, color = NurseryColors.BotanicalGreen, fontWeight = FontWeight.Bold)
+                            Text("•", fontSize = 11.sp, color = NurseryColors.MutedInk)
+                            Text("${summary.second} update", fontSize = 11.sp, color = NurseryColors.Maroon, fontWeight = FontWeight.Bold)
+                            if (summary.third > 0) {
+                                Text("•", fontSize = 11.sp, color = NurseryColors.MutedInk)
+                                Text("${summary.third} need checking", fontSize = 11.sp, color = NurseryColors.WarningHeader, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = NurseryColors.DarkInk)
+                    }
                 }
 
-                Text(
-                    text = "${parsedRows.size} plants detected. Review prices, select policy, and confirm.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = NurseryColors.MutedInk
-                )
-
-                // Import Policy Selector
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
-                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
-                ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Import Policy:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        PlantRateImportPolicy.entries.forEach { p ->
+                // Collapsible photo strip when image exists
+                if (thumbnailBitmap != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = NurseryColors.PaperSurface,
+                        border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { policy = p }
+                                    .clickable { showLargePhoto = !showLargePhoto },
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                RadioButton(
-                                    selected = policy == p,
-                                    onClick = { policy = p },
-                                    colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = NurseryColors.Maroon)
+                                Image(
+                                    bitmap = thumbnailBitmap!!.asImageBitmap(),
+                                    contentDescription = "Original scan photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
                                 )
-                                Text(p.label, style = MaterialTheme.typography.bodySmall)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (showLargePhoto) "Hide photo preview" else "Tap photo to compare digits",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = NurseryColors.Maroon
+                                    )
+                                    Text(
+                                        text = "Compare against handwritten values while checking",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NurseryColors.MutedInk
+                                    )
+                                }
+                                Icon(
+                                    imageVector = if (showLargePhoto) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = NurseryColors.MutedInk
+                                )
+                            }
+
+                            if (showLargePhoto) {
+                                Spacer(Modifier.height(8.dp))
+                                Image(
+                                    bitmap = thumbnailBitmap!!.asImageBitmap(),
+                                    contentDescription = "Full photo preview",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(240.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                )
                             }
                         }
                     }
                 }
 
-                // Table of Parsed Rows
+                // Toolbar: Select all | Select none | Swap Wholesale <-> Retail
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            parsedRows.forEach { row ->
+                                val currentName = nameEdits[row.id] ?: ""
+                                val currentW = wholesaleEdits[row.id]?.toDoubleOrNull() ?: 0.0
+                                val currentR = retailEdits[row.id]?.toDoubleOrNull() ?: 0.0
+                                if (currentName.isNotBlank() && (currentW > 0.0 || currentR > 0.0)) {
+                                    checkedMap[row.id] = true
+                                }
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Text("Select all", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = { checkedMap.clear() },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Text("Select none", fontSize = 11.sp)
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    OutlinedButton(
+                        onClick = {
+                            parsedRows.forEach { row ->
+                                val oldW = wholesaleEdits[row.id] ?: ""
+                                val oldR = retailEdits[row.id] ?: ""
+                                wholesaleEdits[row.id] = oldR
+                                retailEdits[row.id] = oldW
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Swap W <-> R", fontSize = 11.sp)
+                    }
+                }
+
+                // Rows list
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(parsedRows.size) { index ->
-                        val row = parsedRows[index]
-                        val isChecked = checkedMap[index] ?: false
-                        val currentRetail = retailEdits[index] ?: ""
-                        val currentWholesale = wholesaleEdits[index] ?: ""
-                        val hasPrice = (currentRetail.toDoubleOrNull() ?: 0.0) > 0.0 || (currentWholesale.toDoubleOrNull() ?: 0.0) > 0.0
+                    items(parsedRows, key = { it.id }) { row ->
+                        val isChecked = checkedMap[row.id] ?: false
+                        val currentName = nameEdits[row.id] ?: ""
+                        val currentWText = wholesaleEdits[row.id] ?: ""
+                        val currentRText = retailEdits[row.id] ?: ""
+                        val currentW = currentWText.toDoubleOrNull() ?: 0.0
+                        val currentR = currentRText.toDoubleOrNull() ?: 0.0
+                        val hasPrice = currentW > 0.0 || currentR > 0.0
+                        val isNameMissing = currentName.isBlank()
+                        val norm = PlantNameMatcher.normalize(currentName)
+                        val isDuplicateInList = norm.isNotBlank() && (currentNormCounts[norm] ?: 0) > 1
 
-                        val existing = existingRates.firstOrNull { it.name.trim().equals(row.name.trim(), ignoreCase = true) }
-                        val status = when {
-                            !hasPrice -> "Missing price"
-                            existing == null -> "New"
-                            existing.retailPrice != (currentRetail.toDoubleOrNull() ?: 0.0) ||
-                                existing.wholesalePrice != (currentWholesale.toDoubleOrNull() ?: 0.0) -> "Will update"
-                            else -> "Unchanged"
+                        val match = existingRates.firstOrNull { PlantNameMatcher.matches(it.name, currentName) }
+
+                        val isWarningWholesaleHigher = currentW > currentR && currentR > 0.0
+
+                        val statusLabel: String
+                        val statusColor: Color
+                        val statusBg: Color
+
+                        when {
+                            isNameMissing -> {
+                                statusLabel = "Name missing"
+                                statusColor = Color.White
+                                statusBg = NurseryColors.DueRed
+                            }
+                            !hasPrice -> {
+                                statusLabel = "Missing price"
+                                statusColor = Color.White
+                                statusBg = NurseryColors.DueRed
+                            }
+                            isDuplicateInList -> {
+                                statusLabel = "Duplicate in list"
+                                statusColor = NurseryColors.WarningHeader
+                                statusBg = NurseryColors.WarningSoft
+                            }
+                            isWarningWholesaleHigher -> {
+                                statusLabel = "Check: wholesale higher than retail"
+                                statusColor = NurseryColors.WarningHeader
+                                statusBg = NurseryColors.WarningSoft
+                            }
+                            match == null -> {
+                                statusLabel = "New"
+                                statusColor = NurseryColors.GreenHeader
+                                statusBg = NurseryColors.GreenSoft
+                            }
+                            match.retailPrice != currentR || match.wholesalePrice != currentW -> {
+                                statusLabel = "Will update (R ${match.retailPrice.toInt()} -> ${currentR.toInt()})"
+                                statusColor = NurseryColors.Maroon
+                                statusBg = NurseryColors.MaroonLight
+                            }
+                            else -> {
+                                statusLabel = "Unchanged"
+                                statusColor = NurseryColors.MutedInk
+                                statusBg = NurseryColors.CreamBackground
+                            }
                         }
 
                         Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (!hasPrice) NurseryColors.WarningSoft else NurseryColors.PaperSurface
-                            ),
-                            border = BorderStroke(1.dp, if (!hasPrice) NurseryColors.WarningHeader else NurseryColors.OutlineSoft),
+                            colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
+                            border = BorderStroke(1.dp, if (!hasPrice || isNameMissing) NurseryColors.DueRed.copy(alpha = 0.5f) else NurseryColors.OutlineSoft),
                             shape = RoundedCornerShape(10.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Checkbox(
-                                    checked = isChecked,
-                                    onCheckedChange = { checked ->
-                                        if (hasPrice) checkedMap[index] = checked
-                                    },
-                                    enabled = hasPrice,
-                                    colors = CheckboxDefaults.colors(checkedColor = NurseryColors.Maroon)
-                                )
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(row.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Surface(
-                                            color = when (status) {
-                                                "New" -> NurseryColors.GreenSoft
-                                                "Will update" -> NurseryColors.MaroonLight
-                                                "Missing price" -> NurseryColors.WarningHeader
-                                                else -> NurseryColors.CreamBackground
-                                            },
-                                            shape = RoundedCornerShape(4.dp)
-                                        ) {
-                                            Text(
-                                                text = status,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = when (status) {
-                                                    "New" -> NurseryColors.GreenHeader
-                                                    "Will update" -> NurseryColors.Maroon
-                                                    "Missing price" -> Color.White
-                                                    else -> NurseryColors.MutedInk
-                                                },
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                        if (existing != null && status == "Will update") {
-                                            Text(
-                                                text = "Current: R ${existing.retailPrice.toInt()} / W ${existing.wholesalePrice.toInt()}",
-                                                fontSize = 10.sp,
-                                                color = NurseryColors.MutedInk
-                                            )
-                                        }
-                                    }
-                                }
-
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(
-                                    modifier = Modifier.width(140.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    OutlinedTextField(
-                                        value = currentRetail,
-                                        onValueChange = {
-                                            retailEdits[index] = it
-                                            if ((it.toDoubleOrNull() ?: 0.0) > 0.0) checkedMap[index] = true
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { checked ->
+                                            if (hasPrice && !isNameMissing) {
+                                                checkedMap[row.id] = checked
+                                            }
                                         },
-                                        placeholder = { Text("R ₹", fontSize = 10.sp) },
-                                        singleLine = true,
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f).height(46.dp)
+                                        enabled = hasPrice && !isNameMissing,
+                                        colors = CheckboxDefaults.colors(checkedColor = NurseryColors.Maroon)
                                     )
 
                                     OutlinedTextField(
-                                        value = currentWholesale,
-                                        onValueChange = {
-                                            wholesaleEdits[index] = it
-                                            if ((it.toDoubleOrNull() ?: 0.0) > 0.0) checkedMap[index] = true
+                                        value = currentName,
+                                        onValueChange = { newName ->
+                                            nameEdits[row.id] = newName
+                                            if (newName.isNotBlank() && hasPrice) checkedMap[row.id] = true
                                         },
-                                        placeholder = { Text("W ₹", fontSize = 10.sp) },
+                                        label = { Text("Plant Name") },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 56.dp)
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = currentWText,
+                                        onValueChange = {
+                                            wholesaleEdits[row.id] = it
+                                            if ((it.toDoubleOrNull() ?: 0.0) > 0.0 && !isNameMissing) checkedMap[row.id] = true
+                                        },
+                                        label = { Text("Wholesale ($currencySymbol)") },
                                         singleLine = true,
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f).height(46.dp)
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 56.dp)
+                                    )
+
+                                    OutlinedTextField(
+                                        value = currentRText,
+                                        onValueChange = {
+                                            retailEdits[row.id] = it
+                                            if ((it.toDoubleOrNull() ?: 0.0) > 0.0 && !isNameMissing) checkedMap[row.id] = true
+                                        },
+                                        label = { Text("Retail ($currencySymbol)") },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 56.dp)
+                                    )
+                                }
+
+                                Surface(
+                                    color = statusBg,
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = statusLabel,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = statusColor,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                     )
                                 }
                             }
@@ -1190,7 +1767,78 @@ private fun RateImportReviewDialog(
                     }
                 }
 
-                // Action Buttons
+                // Import Policy Selector
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
+                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { policy = PlantRateImportPolicy.ADD_NEW_AND_UPDATE_EXISTING }
+                        ) {
+                            RadioButton(
+                                selected = policy == PlantRateImportPolicy.ADD_NEW_AND_UPDATE_EXISTING,
+                                onClick = { policy = PlantRateImportPolicy.ADD_NEW_AND_UPDATE_EXISTING },
+                                colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = NurseryColors.Maroon)
+                            )
+                            Text("Add new + update existing", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { policy = PlantRateImportPolicy.ADD_NEW_ONLY }
+                        ) {
+                            RadioButton(
+                                selected = policy == PlantRateImportPolicy.ADD_NEW_ONLY,
+                                onClick = { policy = PlantRateImportPolicy.ADD_NEW_ONLY },
+                                colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = NurseryColors.Maroon)
+                            )
+                            Text("Add new only", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        if (source == RateReviewSource.FILE) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isMoreOptionsOpen = !isMoreOptionsOpen }
+                                    .padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("More options", style = MaterialTheme.typography.labelSmall, color = NurseryColors.MutedInk)
+                                Icon(
+                                    if (isMoreOptionsOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = NurseryColors.MutedInk
+                                )
+                            }
+
+                            if (isMoreOptionsOpen) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showReplaceConfirmDialog = true }
+                                ) {
+                                    RadioButton(
+                                        selected = policy == PlantRateImportPolicy.REPLACE_ALL,
+                                        onClick = { showReplaceConfirmDialog = true },
+                                        colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = NurseryColors.DueRed)
+                                    )
+                                    Text("Replace all plant rates (destructive)", style = MaterialTheme.typography.bodySmall, color = NurseryColors.DueRed)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Footer Actions
                 val checkedCount = checkedMap.values.count { it }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1198,20 +1846,24 @@ private fun RateImportReviewDialog(
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f).height(48.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
                     ) {
                         Text("Cancel")
                     }
 
                     Button(
                         onClick = {
-                            val approved = parsedRows.mapIndexedNotNull { idx, row ->
-                                if (checkedMap[idx] == true) {
-                                    val r = retailEdits[idx]?.toDoubleOrNull() ?: 0.0
-                                    val w = wholesaleEdits[idx]?.toDoubleOrNull() ?: r
+                            val approved = parsedRows.mapIndexedNotNull { _, row ->
+                                if (checkedMap[row.id] == true) {
+                                    val name = (nameEdits[row.id] ?: row.name).trim()
+                                    val r = retailEdits[row.id]?.toDoubleOrNull() ?: 0.0
+                                    val w = wholesaleEdits[row.id]?.toDoubleOrNull() ?: r
+                                    val cat = (categoryEdits[row.id] ?: row.category).trim()
                                     PlantRate(
-                                        name = row.name.trim(),
-                                        category = row.category.ifBlank { "Plants" },
+                                        name = name,
+                                        category = cat,
                                         retailPrice = r,
                                         wholesalePrice = w,
                                         updatedAt = System.currentTimeMillis()
@@ -1222,39 +1874,193 @@ private fun RateImportReviewDialog(
                         },
                         enabled = checkedCount > 0,
                         colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
-                        modifier = Modifier.weight(1.5f).height(48.dp)
+                        modifier = Modifier
+                            .weight(1.5f)
+                            .height(48.dp)
                     ) {
-                        Text("Import $checkedCount Plants")
+                        Text("Save $checkedCount plants", fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
     }
+
+    if (showReplaceConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showReplaceConfirmDialog = false },
+            title = { Text("Replace All Plant Rates?", color = NurseryColors.DueRed, fontWeight = FontWeight.Bold) },
+            text = {
+                Text("This will permanently delete all ${existingRates.size} existing plant rates and replace them with the imported list. Are you sure?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        policy = PlantRateImportPolicy.REPLACE_ALL
+                        showReplaceConfirmDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.DueRed)
+                ) {
+                    Text("Confirm Replace All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReplaceConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
-private suspend fun parsePlantRatesFromUri(context: android.content.Context, uri: Uri): List<ParsedRateRow> = withContext(Dispatchers.IO) {
+private suspend fun parsePlantRatesFromUri(context: Context, uri: Uri): List<ParsedRateRow> = withContext(Dispatchers.IO) {
     runCatching {
         val stream = context.contentResolver.openInputStream(uri) ?: return@withContext emptyList()
         val reader = BufferedReader(InputStreamReader(stream, Charsets.UTF_8))
-        val text = reader.readText()
+        val rawText = reader.readText()
         reader.close()
 
-        // Check if JSON
-        val trimmed = text.trim()
-        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-            val type = object : TypeToken<List<Map<String, Any>>>() {}.type
-            val list = Gson().fromJson<List<Map<String, Any>>>(trimmed, type)
-            return@withContext list.mapNotNull { map ->
-                val name = map["name"]?.toString()?.trim() ?: return@mapNotNull null
-                val cat = map["category"]?.toString()?.trim() ?: "Plants"
-                val r = (map["retailPrice"] as? Number)?.toDouble() ?: 0.0
-                val w = (map["wholesalePrice"] as? Number)?.toDouble() ?: r
-                ParsedRateRow(name = name, category = cat, retailPrice = r, wholesalePrice = w)
+        val text = rawText.removePrefix("\uFEFF").trim()
+
+        // 1. JSON Parsing: bare array, {"rates": [...]}, or backup format
+        if ((text.startsWith("[") && text.endsWith("]")) || (text.startsWith("{") && text.endsWith("}"))) {
+            val jsonRows = runCatching {
+                val array = if (text.startsWith("[")) {
+                    JSONArray(text)
+                } else {
+                    val root = JSONObject(text)
+                    root.optJSONArray("rates")
+                }
+                if (array != null && array.length() > 0) {
+                    val list = mutableListOf<ParsedRateRow>()
+                    for (i in 0 until array.length()) {
+                        val item = array.optJSONObject(i) ?: continue
+                        val name = item.optString("name", item.optString("plant", item.optString("PlantName", ""))).trim()
+                        val cat = item.optString("category", item.optString("Category", "")).trim()
+                        val r = item.optDouble("retailPrice", item.optDouble("retail", item.optDouble("RetailPrice", 0.0)))
+                        val w = item.optDouble("wholesalePrice", item.optDouble("wholesale", item.optDouble("WholesalePrice", 0.0)))
+                        val hasPrice = r > 0.0 || w > 0.0
+                        val nameMissing = name.isBlank() || name == "?"
+                        list.add(
+                            ParsedRateRow(
+                                name = if (name == "?") "" else name,
+                                category = cat,
+                                retailPrice = r,
+                                wholesalePrice = w,
+                                isValid = !nameMissing && hasPrice,
+                                statusNote = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
+                            )
+                        )
+                    }
+                    list
+                } else null
+            }.getOrNull()
+
+            if (!jsonRows.isNullOrEmpty()) {
+                return@withContext jsonRows
             }
         }
 
-        // CSV parsing with auto-delimiter
-        AiTextParser.parseRateList(text)
+        // 2. Real CSV Parsing
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (lines.isEmpty()) return@withContext emptyList()
+
+        // Detect delimiter (comma, semicolon, tab)
+        val firstLine = lines.first()
+        val commaCount = firstLine.count { it == ',' }
+        val semiCount = firstLine.count { it == ';' }
+        val tabCount = firstLine.count { it == '\t' }
+        val delimiter = when {
+            semiCount > commaCount && semiCount > tabCount -> ';'
+            tabCount > commaCount && tabCount > semiCount -> '\t'
+            else -> ','
+        }
+
+        fun parseCsvRow(row: String): List<String> {
+            val cells = mutableListOf<String>()
+            val sb = java.lang.StringBuilder()
+            var inQuotes = false
+            var i = 0
+            while (i < row.length) {
+                val c = row[i]
+                if (c == '\"') {
+                    if (inQuotes && i + 1 < row.length && row[i + 1] == '\"') {
+                        sb.append('\"')
+                        i++
+                    } else {
+                        inQuotes = !inQuotes
+                    }
+                } else if (c == delimiter && !inQuotes) {
+                    cells.add(sb.toString().trim())
+                    sb.setLength(0)
+                } else {
+                    sb.append(c)
+                }
+                i++
+            }
+            cells.add(sb.toString().trim())
+            return cells
+        }
+
+        val firstRowCells = parseCsvRow(firstLine)
+        val lowerHeaders = firstRowCells.map { it.lowercase() }
+
+        var nameCol = -1
+        var catCol = -1
+        var retailCol = -1
+        var wholesaleCol = -1
+
+        for (i in lowerHeaders.indices) {
+            val h = lowerHeaders[i]
+            when {
+                nameCol == -1 && (h.contains("plant") || h.contains("name") || h.contains("item")) -> nameCol = i
+                catCol == -1 && h.contains("category") -> catCol = i
+                wholesaleCol == -1 && h.contains("wholesale") -> wholesaleCol = i
+                retailCol == -1 && (h.contains("retail") || h.contains("price") || h.contains("rate")) -> retailCol = i
+            }
+        }
+
+        val hasHeader = nameCol != -1 || retailCol != -1 || wholesaleCol != -1
+        val dataLines = if (hasHeader) lines.drop(1) else lines
+
+        if (!hasHeader) {
+            // Assume order: Name, Wholesale, Retail (or Name, Retail if 2 columns)
+            if (firstRowCells.size >= 3) {
+                nameCol = 0
+                wholesaleCol = 1
+                retailCol = 2
+            } else {
+                nameCol = 0
+                wholesaleCol = -1
+                retailCol = 1
+            }
+        }
+
+        val parsed = mutableListOf<ParsedRateRow>()
+        for (line in dataLines) {
+            val cells = parseCsvRow(line)
+            if (cells.isEmpty()) continue
+            val rawName = if (nameCol in cells.indices) cells[nameCol] else cells.firstOrNull().orEmpty()
+            val cat = if (catCol in cells.indices) cells[catCol] else ""
+            val wStr = if (wholesaleCol in cells.indices) AiTextParser.cleanNumber(cells[wholesaleCol]) else ""
+            val rStr = if (retailCol in cells.indices) AiTextParser.cleanNumber(cells[retailCol]) else ""
+            val w = wStr.toDoubleOrNull() ?: 0.0
+            val r = rStr.toDoubleOrNull() ?: 0.0
+            val nameMissing = rawName.isBlank() || rawName == "?"
+            val name = if (rawName == "?") "" else rawName
+            val hasPrice = r > 0.0 || w > 0.0
+
+            parsed.add(
+                ParsedRateRow(
+                    name = name,
+                    category = cat,
+                    retailPrice = r,
+                    wholesalePrice = w,
+                    isValid = !nameMissing && hasPrice,
+                    statusNote = if (nameMissing) "Name missing" else if (!hasPrice) "Missing price" else ""
+                )
+            )
+        }
+        parsed
     }.getOrElse { emptyList() }
 }
 
@@ -1352,16 +2158,20 @@ private fun CustomerFormDialog(
     var name by remember(initial) { mutableStateOf(initial?.name ?: "") }
     var phone by remember(initial) { mutableStateOf(initial?.phoneNumber ?: "") }
     var address by remember(initial) { mutableStateOf(initial?.address ?: "") }
+    val isValid = name.isNotBlank()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title, fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Customer Name *") },
+                    label = { Text("Customer / Nursery Name *") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1369,7 +2179,7 @@ private fun CustomerFormDialog(
                 OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },
-                    label = { Text("Mobile Number") },
+                    label = { Text("Mobile / Phone") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     shape = RoundedCornerShape(12.dp),
@@ -1378,7 +2188,7 @@ private fun CustomerFormDialog(
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
-                    label = { Text("Address / Village") },
+                    label = { Text("Village / Address") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1388,27 +2198,22 @@ private fun CustomerFormDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank()) {
-                        onSave(
-                            CustomerProfile(
-                                id = initial?.id ?: "cust_${System.currentTimeMillis()}",
-                                name = name.trim(),
-                                phoneNumber = phone.trim(),
-                                address = address.trim(),
-                                outstandingBalance = initial?.outstandingBalance ?: 0.0,
-                                totalPurchased = initial?.totalPurchased ?: 0.0,
-                                totalPaid = initial?.totalPaid ?: 0.0,
-                                lastPromiseNote = initial?.lastPromiseNote ?: "Carry Forward",
-                                lastTransactionAt = System.currentTimeMillis()
-                            )
-                        )
-                    }
+                    val saved = (initial ?: CustomerProfile(name = name.trim())).copy(
+                        name = name.trim(),
+                        phoneNumber = phone.trim(),
+                        address = address.trim()
+                    )
+                    onSave(saved)
                 },
-                enabled = name.isNotBlank(),
+                enabled = isValid,
                 colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon)
-            ) { Text("Save") }
+            ) {
+                Text("Save")
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
     )
 }
 
@@ -1419,32 +2224,35 @@ private fun SettleDueDialog(
     onDismiss: () -> Unit,
     onConfirm: (Double, String) -> Unit
 ) {
-    var amountText by remember { mutableStateOf(customer.outstandingBalance.toString()) }
-    var noteText by remember { mutableStateOf("Carry Forward") }
+    var amountText by remember { mutableStateOf(if (customer.outstandingBalance > 0.0) customer.outstandingBalance.toString() else "") }
+    var note by remember { mutableStateOf("Paid in Cash") }
+    val enteredAmount = amountText.toDoubleOrNull() ?: 0.0
+    val isValid = enteredAmount > 0.0
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Settle Due — ${customer.name}", fontWeight = FontWeight.Bold) },
+        title = { Text("Settle Customer Due", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Customer: ${customer.name}", fontWeight = FontWeight.SemiBold)
                 Text(
-                    text = "Outstanding: ${IndianCurrencyFormatter.formatInr(customer.outstandingBalance, currencySymbol)}",
-                    fontWeight = FontWeight.Bold,
-                    color = NurseryColors.DueRed
+                    text = "Current Due: ${IndianCurrencyFormatter.formatInr(customer.outstandingBalance, currencySymbol)}",
+                    color = NurseryColors.DueRed,
+                    fontWeight = FontWeight.Bold
                 )
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },
-                    label = { Text("Amount Received") },
+                    label = { Text("Paid Amount ($currencySymbol)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
-                    value = noteText,
-                    onValueChange = { noteText = it },
-                    label = { Text("Balance Note") },
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Payment Note (e.g. Paid via UPI)") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -1453,14 +2261,16 @@ private fun SettleDueDialog(
         },
         confirmButton = {
             Button(
-                onClick = {
-                    val amt = amountText.toDoubleOrNull() ?: 0.0
-                    if (amt > 0.0) onConfirm(amt, noteText)
-                },
+                onClick = { onConfirm(enteredAmount, note.trim()) },
+                enabled = isValid,
                 colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen)
-            ) { Text("Record Payment") }
+            ) {
+                Text("Record Payment")
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
     )
 }
 
@@ -1485,7 +2295,7 @@ private fun CustomerProfileHistoryDialog(
         Surface(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(12.dp),
             shape = RoundedCornerShape(16.dp),
             color = NurseryColors.CreamBackground
         ) {
@@ -1495,25 +2305,28 @@ private fun CustomerProfileHistoryDialog(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Header
+                // Header with actions
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(customer.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(customer.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NurseryColors.DarkInk)
                         if (customer.phoneNumber.isNotBlank()) {
                             Text(customer.phoneNumber, style = MaterialTheme.typography.bodySmall, color = NurseryColors.MutedInk)
                         }
                     }
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
                 }
 
-                // Balance Summary
+                // Balance summary card
                 Card(
                     colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
-                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
+                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Row(
                         modifier = Modifier
@@ -1523,41 +2336,54 @@ private fun CustomerProfileHistoryDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Current Due", style = MaterialTheme.typography.labelSmall, color = NurseryColors.MutedInk)
+                            Text("Outstanding Due", style = MaterialTheme.typography.labelSmall, color = NurseryColors.MutedInk)
                             Text(
                                 text = IndianCurrencyFormatter.formatInr(customer.outstandingBalance, currencySymbol),
-                                fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
                                 color = if (customer.outstandingBalance > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             if (customer.outstandingBalance > 0.009) {
                                 Button(
                                     onClick = onSettleDue,
                                     colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen),
-                                    shape = RoundedCornerShape(16.dp)
+                                    shape = RoundedCornerShape(14.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
-                                    Text("Settle Due")
+                                    Text("Settle Due", fontSize = 12.sp)
                                 }
                             }
-                            Button(
-                                onClick = onCreateNewBill,
-                                colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
-                                shape = RoundedCornerShape(16.dp)
+                            OutlinedButton(
+                                onClick = onEditCustomer,
+                                shape = RoundedCornerShape(14.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                             ) {
-                                Text("New Bill")
+                                Text("Edit Profile", fontSize = 12.sp)
                             }
                         }
                     }
                 }
 
-                // Bill History
-                Text("Order / Bill History (${bills.size})", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                // New bill button
+                Button(
+                    onClick = onCreateNewBill,
+                    colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Create New Bill for this Customer", fontWeight = FontWeight.Bold)
+                }
 
+                Text("Billing History (${bills.size})", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = NurseryColors.MutedInk)
+
+                // Bills list
                 if (bills.isEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text("No prior cash memos found for this customer.", color = NurseryColors.MutedInk)
+                        Text("No past cash memos found for this customer.", color = NurseryColors.MutedInk, style = MaterialTheme.typography.bodySmall)
                     }
                 } else {
                     LazyColumn(
@@ -1568,9 +2394,7 @@ private fun CustomerProfileHistoryDialog(
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
                                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onEditBill(bill) }
+                                shape = RoundedCornerShape(8.dp)
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -1579,22 +2403,26 @@ private fun CustomerProfileHistoryDialog(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column {
-                                        Text("Memo #${bill.memoNumber} • ${bill.date}", fontWeight = FontWeight.Bold)
-                                        Text("${bill.items.size} item(s) • Total: ${IndianCurrencyFormatter.formatInr(bill.totalPayable, currencySymbol)}", style = MaterialTheme.typography.bodySmall)
-                                        if (bill.balanceDue > 0.009) {
-                                            Text("Due: ${IndianCurrencyFormatter.formatInr(bill.balanceDue, currencySymbol)}", color = NurseryColors.DueRed, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                        }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Memo #${bill.memoNumber} • ${bill.date}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text(
+                                            text = "Total: ${IndianCurrencyFormatter.formatInr(bill.totalPayable, currencySymbol)} | Paid: ${IndianCurrencyFormatter.formatInr(bill.paidAmount, currencySymbol)} | Due: ${IndianCurrencyFormatter.formatInr(bill.balanceDue, currencySymbol)}",
+                                            fontSize = 11.sp,
+                                            color = if (bill.balanceDue > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen
+                                        )
                                     }
                                     Row {
+                                        IconButton(onClick = { onEditBill(bill) }, modifier = Modifier.size(32.dp)) {
+                                            Icon(Icons.Default.Search, contentDescription = "View / Edit", modifier = Modifier.size(16.dp))
+                                        }
                                         IconButton(onClick = { onPrintBill(bill) }, modifier = Modifier.size(32.dp)) {
-                                            Icon(Icons.Default.Print, contentDescription = "Print", modifier = Modifier.size(16.dp))
+                                            Icon(Icons.Default.Payments, contentDescription = "Print", modifier = Modifier.size(16.dp))
                                         }
                                         IconButton(onClick = { onShareBillJpeg(bill) }, modifier = Modifier.size(32.dp)) {
                                             Icon(Icons.Default.Image, contentDescription = "Share JPEG", modifier = Modifier.size(16.dp))
                                         }
                                         IconButton(onClick = { onShareBillPdf(bill) }, modifier = Modifier.size(32.dp)) {
-                                            Icon(Icons.Default.PictureAsPdf, contentDescription = "Share PDF", modifier = Modifier.size(16.dp))
+                                            Icon(Icons.Default.FileUpload, contentDescription = "Share PDF", modifier = Modifier.size(16.dp))
                                         }
                                     }
                                 }

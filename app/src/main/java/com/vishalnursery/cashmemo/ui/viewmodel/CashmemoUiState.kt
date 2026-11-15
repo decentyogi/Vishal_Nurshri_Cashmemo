@@ -10,6 +10,7 @@ import com.vishalnursery.cashmemo.domain.model.MemoCalculationResult
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
 import com.vishalnursery.cashmemo.domain.model.PlantRate
+import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 
 enum class AppDestination(val label: String) {
     SCANNER("Scan"),
@@ -75,6 +76,18 @@ data class ScannerUiState(
     val aiPasteImageUri: String? = null
 )
 
+enum class RateReviewSource { FILE, GEMINI, PASTE }
+
+data class RateScanUiState(
+    val isScanning: Boolean = false,
+    val errorMessage: String? = null,
+    val isPasteOpen: Boolean = false,
+    val pasteText: String = "",
+    val imageUri: String? = null,
+    val pendingRows: List<ParsedRateRow>? = null,
+    val pendingSource: RateReviewSource = RateReviewSource.FILE
+)
+
 data class SyncDryRunResult(
     val title: String,
     val description: String = "",
@@ -97,6 +110,7 @@ data class CashmemoUiState(
     val activeDestination: AppDestination = AppDestination.SCANNER,
     val settings: BusinessSettings = BusinessSettings(),
     val scanner: ScannerUiState = ScannerUiState(),
+    val rateScan: RateScanUiState = RateScanUiState(),
     val editor: EditorUiState = EditorUiState(),
     val allMemos: List<CashMemo> = emptyList(),
     val filteredMemos: List<CashMemo> = emptyList(),

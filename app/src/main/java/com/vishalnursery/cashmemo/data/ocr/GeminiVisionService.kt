@@ -11,6 +11,7 @@ import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import com.vishalnursery.cashmemo.domain.model.AiExtractedItem
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
+import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.domain.util.AiPrompts
 import com.vishalnursery.cashmemo.domain.util.AiTextParser
@@ -160,18 +161,18 @@ class GeminiVisionService(private val context: Context) {
         uri: Uri,
         apiKey: String,
         preferredModel: String,
-        translationMode: TranslationMode
+        nameStyle: RateNameStyle
     ): Result<List<ParsedRateRow>> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanKey = apiKey.trim()
             require(cleanKey.isNotEmpty()) { "Please add your Gemini API key first." }
 
             val base64Jpeg = encodeCompressedJpegBase64(uri)
-            val prompt = AiPrompts.getRateListPrompt(translationMode)
+            val prompt = AiPrompts.getRateListPrompt(nameStyle)
             val initialModel = preferredModel.trim().ifBlank { "gemini-3.5-flash" }
 
             val (rawText, _) = tryModelWithAutoFallback(cleanKey, initialModel, base64Jpeg, prompt, isJson = false)
-            AiTextParser.parseRateList(rawText).take(50)
+            AiTextParser.parseRateList(rawText)
         }
     }
 

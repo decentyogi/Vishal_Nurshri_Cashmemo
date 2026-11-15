@@ -20,11 +20,13 @@ import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
 import com.vishalnursery.cashmemo.domain.model.PlantRate
+import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.domain.model.round2
 import com.vishalnursery.cashmemo.domain.util.AiTextParser
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
+import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -117,8 +119,18 @@ class CashmemoViewModel(
         }
     }
 
+    private var previousDestinationBeforeSettings: AppDestination = AppDestination.SCANNER
+
     fun navigateTo(destination: AppDestination) {
+        if (destination == AppDestination.SETTINGS && _uiState.value.activeDestination != AppDestination.SETTINGS) {
+            previousDestinationBeforeSettings = _uiState.value.activeDestination
+        }
         _uiState.update { it.copy(activeDestination = destination) }
+    }
+
+    fun closeSettings() {
+        val target = previousDestinationBeforeSettings
+        _uiState.update { it.copy(activeDestination = target) }
     }
 
     // --- Scanner, Gemini AI Vision & Quick-Edit Actions ---
@@ -136,6 +148,14 @@ class CashmemoViewModel(
         if (current.translationMode == mode) return
         viewModelScope.launch {
             repository.saveSettings(current.copy(translationMode = mode))
+        }
+    }
+
+    fun setRateNameStyle(style: RateNameStyle) {
+        val current = _uiState.value.settings
+        if (current.rateNameStyle == style) return
+        viewModelScope.launch {
+            repository.saveSettings(current.copy(rateNameStyle = style))
         }
     }
 
@@ -1008,6 +1028,156 @@ class CashmemoViewModel(
                     _events.emit(UiEvent.ShowMessage("Import failed: ${err.localizedMessage}"))
                 }
         }
+    }
+
+    // --- Plant Rate Scanning & AI Paste (Part 5) ---
+
+    fun scanRateListImage(uri: Uri) {
+        val settings = _uiState.value.settings
+        if (settings.scanEngine == ScanEngine.OTHER_AI) {
+            openRatePaste(uri.toString())
+            return
+        }
+        if (settings.geminiApiKey.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    rateScan = it.rateScan.copy(
+                        imageUri = uri.toString(),
+                        errorMessage = "Add your Gemini API key in Settings, or use another AI."
+                    )
+                )
+            }
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                rateScan = it.rateScan.copy(
+                    isScanning = true,
+                    imageUri = uri.toString(),
+                    errorMessage = null
+                )
+            )
+        }
+
+        viewModelScope.launch {
+            geminiService.analyzeRateList(
+                uri = uri,
+                apiKey = settings.geminiApiKey,
+                preferredModel = settings.geminiModel,
+                nameStyle = settings.rateNameStyle
+            ).onSuccess { rows ->
+                if (rows.isEmpty()) {
+                    _uiState.update {
+                        it.copy(
+                            rateScan = it.rateScan.copy(
+                                isScanning = false,
+                                errorMessage = "Gemini couldn't find any plants in this image."
+                            )
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            rateScan = it.rateScan.copy(
+                                isScanning = false,
+                                pendingRows = rows,
+                                pendingSource = RateReviewSource.GEMINI,
+                                errorMessage = null
+                            )
+                        )
+                    }
+                    _events.emit(UiEvent.ShowMessage("Gemini found ${rows.size} plants. Check the prices before saving."))
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        rateScan = it.rateScan.copy(
+                            isScanning = false,
+                            errorMessage = mapGeminiError(err)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun openRatePaste(imageUri: String? = null) {
+        _uiState.update { current ->
+            val uriToUse = imageUri ?: current.rateScan.imageUri
+            current.copy(
+                rateScan = current.rateScan.copy(
+                    isPasteOpen = true,
+                    imageUri = uriToUse,
+                    errorMessage = null
+                )
+            )
+        }
+    }
+
+    fun closeRatePaste() {
+        _uiState.update { it.copy(rateScan = it.rateScan.copy(isPasteOpen = false, pasteText = "")) }
+    }
+
+    fun updateRatePasteText(text: String) {
+        _uiState.update { it.copy(rateScan = it.rateScan.copy(pasteText = text)) }
+    }
+
+    fun submitRatePaste() {
+        val text = _uiState.value.rateScan.pasteText
+        val rows = AiTextParser.parseRateList(text)
+        if (rows.isEmpty()) {
+            viewModelScope.launch { _events.emit(UiEvent.ShowMessage("No plants found in the pasted text")) }
+        } else {
+            _uiState.update {
+                it.copy(
+                    rateScan = it.rateScan.copy(
+                        isPasteOpen = false,
+                        pendingRows = rows,
+                        pendingSource = RateReviewSource.PASTE
+                    )
+                )
+            }
+        }
+    }
+
+    fun showRateReview(rows: List<ParsedRateRow>, source: RateReviewSource) {
+        _uiState.update {
+            it.copy(
+                rateScan = it.rateScan.copy(
+                    pendingRows = rows,
+                    pendingSource = source,
+                    errorMessage = null
+                )
+            )
+        }
+    }
+
+    fun dismissRateReview() {
+        val current = _uiState.value.rateScan
+        if (current.pendingSource == RateReviewSource.PASTE) {
+            _uiState.update { it.copy(rateScan = it.rateScan.copy(isPasteOpen = true, pendingRows = null)) }
+        } else {
+            _uiState.update { it.copy(rateScan = it.rateScan.copy(pendingRows = null)) }
+        }
+    }
+
+    fun confirmRateImport(rows: List<PlantRate>, policy: PlantRateImportPolicy) {
+        importPlantRates(rows, policy) {
+            _uiState.update {
+                it.copy(
+                    rateScan = it.rateScan.copy(
+                        pendingRows = null,
+                        pasteText = "",
+                        imageUri = null
+                    )
+                )
+            }
+        }
+    }
+
+    fun clearRateScanError() {
+        _uiState.update { it.copy(rateScan = it.rateScan.copy(errorMessage = null)) }
     }
 
     // --- Web Sync Methods (Task D) ---

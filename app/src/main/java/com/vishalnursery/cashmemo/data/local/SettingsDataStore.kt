@@ -45,6 +45,7 @@ class SettingsDataStore(private val context: Context) {
         val TRANSLATION_MODE = stringPreferencesKey("translation_mode")
         val BILL_EXPORT_LAYOUT = stringPreferencesKey("bill_export_layout")
         val SCAN_ENGINE = stringPreferencesKey("scan_engine")
+        val RATE_NAME_STYLE = stringPreferencesKey("rate_name_style")
         val LAST_SYNC_STATUS = stringPreferencesKey("last_sync_status")
     }
 
@@ -76,7 +77,8 @@ class SettingsDataStore(private val context: Context) {
             geminiModel = prefs[Keys.GEMINI_MODEL]?.takeIf { it.isNotBlank() } ?: defaults.geminiModel,
             translationMode = TranslationMode.fromWire(prefs[Keys.TRANSLATION_MODE]),
             billExportLayout = BillExportLayout.fromWire(prefs[Keys.BILL_EXPORT_LAYOUT]),
-            scanEngine = ScanEngine.fromWire(prefs[Keys.SCAN_ENGINE])
+            scanEngine = ScanEngine.fromWire(prefs[Keys.SCAN_ENGINE]),
+            rateNameStyle = RateNameStyle.fromWire(prefs[Keys.RATE_NAME_STYLE])
         )
     }
 
@@ -119,6 +121,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.TRANSLATION_MODE] = settings.translationMode.wireValue
             prefs[Keys.BILL_EXPORT_LAYOUT] = settings.billExportLayout.wireValue
             prefs[Keys.SCAN_ENGINE] = settings.scanEngine.wireValue
+            prefs[Keys.RATE_NAME_STYLE] = settings.rateNameStyle.wireValue
         }
     }
 

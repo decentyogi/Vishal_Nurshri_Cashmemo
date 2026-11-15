@@ -13,6 +13,7 @@ import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.model.round2
+import com.vishalnursery.cashmemo.domain.util.PlantNameMatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -222,12 +223,20 @@ class CashmemoRepository(
                 }
                 PlantRateImportPolicy.ADD_NEW_AND_UPDATE_EXISTING -> {
                     for (row in rows) {
-                        val match = existing.firstOrNull { it.name.trim().equals(row.name.trim(), ignoreCase = true) }
+                        val match = existing.firstOrNull { PlantNameMatcher.matches(it.name, row.name) }
                         if (match != null) {
-                            if (match.retailPrice == row.retailPrice && match.wholesalePrice == row.wholesalePrice && match.category == row.category) {
+                            val pricesEqual = match.retailPrice == row.retailPrice && match.wholesalePrice == row.wholesalePrice
+                            if (pricesEqual) {
                                 unchanged++
                             } else {
-                                rateDao.upsertRate(row.copy(id = match.id, updatedAt = now).toEntity())
+                                val cat = if (match.category.isBlank() && row.category.isNotBlank()) row.category else match.category
+                                val updatedRate = match.copy(
+                                    retailPrice = row.retailPrice,
+                                    wholesalePrice = row.wholesalePrice,
+                                    category = cat,
+                                    updatedAt = now
+                                )
+                                rateDao.upsertRate(updatedRate.toEntity())
                                 updated++
                             }
                         } else {
@@ -238,7 +247,7 @@ class CashmemoRepository(
                 }
                 PlantRateImportPolicy.ADD_NEW_ONLY -> {
                     for (row in rows) {
-                        val match = existing.firstOrNull { it.name.trim().equals(row.name.trim(), ignoreCase = true) }
+                        val match = existing.firstOrNull { PlantNameMatcher.matches(it.name, row.name) }
                         if (match == null) {
                             rateDao.upsertRate(row.copy(updatedAt = now).toEntity())
                             added++

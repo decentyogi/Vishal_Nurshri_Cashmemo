@@ -32,6 +32,7 @@ data class CashMemoEntity(
     val notes: String,
     val rawOcrText: String,
     val sourceImageUri: String,
+    @ColumnInfo(defaultValue = "0") val isWholesale: Boolean = false,
     val isSynced: Boolean,
     val createdAt: Long,
     val updatedAt: Long

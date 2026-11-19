@@ -34,6 +34,7 @@ data class CashMemo(
     val notes: String = "",
     val rawOcrText: String = "",
     val sourceImageUri: String = "",
+    val isWholesale: Boolean = false,
     val isSynced: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

@@ -544,10 +544,11 @@ class SyncManager(
                     memoDao.upsertMemoWithItems(domain.toEntity(), domain.toItemEntities())
                     pulled++
                 } else if (remote.updatedAt > matched.updatedAt) {
-                    // Server is newer: update, but PRESERVE local rawOcrText and sourceImageUri
+                    // Server is newer: update, but PRESERVE local rawOcrText, sourceImageUri, and isWholesale if remote is null
                     val domain = remote.toDomain(synced = true).copy(
                         rawOcrText = matched.rawOcrText,
-                        sourceImageUri = matched.sourceImageUri
+                        sourceImageUri = matched.sourceImageUri,
+                        isWholesale = remote.isWholesale ?: matched.isWholesale
                     )
                     memoDao.upsertMemoWithItems(domain.toEntity(), domain.toItemEntities())
                     pulled++

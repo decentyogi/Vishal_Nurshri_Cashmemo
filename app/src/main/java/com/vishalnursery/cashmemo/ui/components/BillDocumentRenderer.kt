@@ -512,16 +512,26 @@ object BillDocumentRenderer {
         drawCenteredText(canvas, sumPaise, (col5 + col6) / 2f, summaryBaseline, textPaint(26f, CLASSIC_DARK_MAROON, bold = true))
 
         // --- Words & Settlement Breakdown Below Table ---
+        val badgeWidth = 430f
+        val badgeHeight = 150f
+        val badgeRight = cRight
+        val badgeLeft = cRight - badgeWidth
+        val badgeMargin = 30f
+
+        val textWidth = if (isFinalPage) (badgeLeft - badgeMargin - cLeft).toInt() else contentWidth.toInt()
+
         val wordsY = tableBottom + 18f
         val wordsString = "शब्दों में: ${IndianCurrencyFormatter.convertToIndianRupees(summaryAmount)}"
-        val wordsUsedHeight = drawStaticText(
+        val wordsUsedHeight = drawFittingStaticText(
             canvas = canvas,
             text = wordsString,
             x = cLeft,
             y = wordsY,
-            width = contentWidth.toInt(),
-            paint = textPaint(26f, INK_DARK, bold = true),
-            alignment = Layout.Alignment.ALIGN_NORMAL,
+            width = textWidth,
+            initialSize = 32f,
+            minSize = 24f,
+            color = INK_DARK,
+            bold = true,
             maxLines = 2
         )
 
@@ -543,7 +553,7 @@ object BillDocumentRenderer {
                 ) {
                     " [$note]"
                 } else {
-                    " [Next Day (कल देगा)]"
+                    " [Carry Forward]"
                 }
             } else {
                 ""
@@ -551,30 +561,113 @@ object BillDocumentRenderer {
             val line2 = "जमा राशि (Paid): ₹ ${formatPlainMoney(memo.paidAmount)}  |  शेष बकाया (Balance Due): ₹ ${formatPlainMoney(memo.balanceDue)}$dueSuffix"
 
             val line1Top = wordsY + wordsUsedHeight + 16f
-            val h1 = drawStaticText(
+            val h1 = drawFittingStaticText(
                 canvas = canvas,
                 text = line1,
                 x = cLeft,
                 y = line1Top,
-                width = contentWidth.toInt(),
-                paint = textPaint(24f, INK_MUTED, bold = true),
-                alignment = Layout.Alignment.ALIGN_NORMAL,
+                width = textWidth,
+                initialSize = 30f,
+                minSize = 24f,
+                color = INK_MUTED,
+                bold = true,
                 maxLines = 2
             )
             val line2Color = if (memo.balanceDue > 0.009) DUE_RED else GREEN_STAMP
-            drawStaticText(
+            drawFittingStaticText(
                 canvas = canvas,
                 text = line2,
                 x = cLeft,
-                y = line1Top + h1 + 8f,
-                width = contentWidth.toInt(),
-                paint = textPaint(25f, line2Color, bold = true),
-                alignment = Layout.Alignment.ALIGN_NORMAL,
+                y = line1Top + h1 + 16f,
+                width = textWidth,
+                initialSize = 32f,
+                minSize = 24f,
+                color = line2Color,
+                bold = true,
                 maxLines = 2
             )
+
+            // --- Big Status Badge on RIGHT side, FINAL PAGE ONLY ---
+            val badgeRect = RectF(badgeLeft, wordsY, badgeRight, wordsY + badgeHeight)
+            val cornerR = 12f
+
+            if (memo.balanceDue > 0.009) {
+                val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#FFF5F5")
+                    style = Paint.Style.FILL
+                }
+                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = DUE_RED
+                    style = Paint.Style.STROKE
+                    strokeWidth = 3f
+                }
+                canvas.drawRoundRect(badgeRect, cornerR, cornerR, fillPaint)
+                canvas.drawRoundRect(badgeRect, cornerR, cornerR, borderPaint)
+
+                val labelPaint = textPaint(25f, DUE_RED, bold = true).apply {
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(
+                    "शेष बकाया (Balance Due)",
+                    badgeRect.centerX(),
+                    badgeRect.top + 42f,
+                    labelPaint
+                )
+
+                val amountText = "₹ ${formatPlainMoney(memo.balanceDue)}"
+                val maxAmountW = badgeWidth - 32f
+                var amountSize = 68f
+                while (amountSize > 34f) {
+                    val p = textPaint(amountSize, DUE_RED, bold = true)
+                    if (p.measureText(amountText) <= maxAmountW) break
+                    amountSize -= 2f
+                }
+                val amountPaint = textPaint(amountSize, DUE_RED, bold = true).apply {
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(
+                    amountText,
+                    badgeRect.centerX(),
+                    badgeRect.top + 114f,
+                    amountPaint
+                )
+            } else {
+                val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#E8F5E9")
+                    style = Paint.Style.FILL
+                }
+                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = GREEN_STAMP
+                    style = Paint.Style.STROKE
+                    strokeWidth = 3f
+                }
+                canvas.drawRoundRect(badgeRect, cornerR, cornerR, fillPaint)
+                canvas.drawRoundRect(badgeRect, cornerR, cornerR, borderPaint)
+
+                val paidPaint = textPaint(68f, GREEN_STAMP, bold = true).apply {
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(
+                    "✓ PAID",
+                    badgeRect.centerX(),
+                    badgeRect.top + 72f,
+                    paidPaint
+                )
+
+                val subPaint = textPaint(28f, GREEN_STAMP, bold = true).apply {
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(
+                    "पूर्ण भुगतान",
+                    badgeRect.centerX(),
+                    badgeRect.top + 120f,
+                    subPaint
+                )
+            }
+
             // UPI QR block on final page (below Paid / Balance Due lines, opposite Stamp box)
             if (IndianCurrencyFormatter.isValidUpiVpa(settings.upiVpa)) {
-                val qrAmount = IndianCurrencyFormatter.resolveBillQrAmount(memo.paidAmount, memo.totalPayable)
+                val qrAmount = IndianCurrencyFormatter.resolveBillQrAmount(memo.paidAmount, memo.totalPayable, memo.balanceDue)
                 val upiUri = IndianCurrencyFormatter.buildUpiUri(
                     upiVpa = settings.upiVpa,
                     payeeName = settings.shopNameEnglish,
@@ -859,7 +952,7 @@ object BillDocumentRenderer {
 
             // UPI QR block (only if valid UPI VPA configured; encodes Paid Amount if > 0 else Total Payable)
             if (IndianCurrencyFormatter.isValidUpiVpa(settings.upiVpa)) {
-                val qrAmount = IndianCurrencyFormatter.resolveBillQrAmount(memo.paidAmount, memo.totalPayable)
+                val qrAmount = IndianCurrencyFormatter.resolveBillQrAmount(memo.paidAmount, memo.totalPayable, memo.balanceDue)
                 val upiUri = IndianCurrencyFormatter.buildUpiUri(
                     upiVpa = settings.upiVpa,
                     payeeName = settings.shopNameEnglish,
@@ -1137,6 +1230,53 @@ object BillDocumentRenderer {
         layout.draw(canvas)
         canvas.restore()
         return layout.height.toFloat()
+    }
+
+    private fun drawFittingStaticText(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        y: Float,
+        width: Int,
+        initialSize: Float,
+        minSize: Float = 24f,
+        color: Int,
+        bold: Boolean = true,
+        maxLines: Int = 2
+    ): Float {
+        if (text.isEmpty() || width <= 0) return 0f
+        var currentSize = initialSize
+        while (currentSize > minSize) {
+            val paint = textPaint(currentSize, color, bold = bold)
+            val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setIncludePad(false)
+                .setMaxLines(maxLines)
+                .build()
+            if (layout.lineCount <= maxLines) {
+                var maxLineWidth = 0f
+                for (i in 0 until layout.lineCount) {
+                    if (layout.getLineWidth(i) > maxLineWidth) {
+                        maxLineWidth = layout.getLineWidth(i)
+                    }
+                }
+                if (maxLineWidth <= width) {
+                    break
+                }
+            }
+            currentSize -= 1f
+        }
+        val finalPaint = textPaint(currentSize, color, bold = bold)
+        return drawStaticText(
+            canvas = canvas,
+            text = text,
+            x = x,
+            y = y,
+            width = width,
+            paint = finalPaint,
+            alignment = Layout.Alignment.ALIGN_NORMAL,
+            maxLines = maxLines
+        )
     }
 
     private fun drawCenteredVerticalStaticText(

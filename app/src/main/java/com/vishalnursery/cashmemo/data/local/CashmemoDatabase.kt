@@ -21,7 +21,7 @@ import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
         CustomerEntity::class,
         PlantRateEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class CashmemoDatabase : RoomDatabase() {
@@ -39,13 +39,19 @@ abstract class CashmemoDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cash_memos ADD COLUMN isWholesale INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getInstance(context: Context): CashmemoDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     CashmemoDatabase::class.java,
                     "vishal_cashmemo_db"
-                ).addMigrations(MIGRATION_1_2)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build().also { INSTANCE = it }
             }
         }

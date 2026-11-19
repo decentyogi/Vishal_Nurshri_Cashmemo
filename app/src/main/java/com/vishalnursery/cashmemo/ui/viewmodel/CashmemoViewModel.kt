@@ -25,6 +25,7 @@ import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.domain.model.round2
 import com.vishalnursery.cashmemo.domain.util.AiTextParser
+import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -453,66 +454,138 @@ class CashmemoViewModel(
                 previousDuesText = if (customer.outstandingBalance > 0.0) formatEditableNumber(customer.outstandingBalance) else it.previousDuesText
             )
         }
+        checkAndAutoApplyRememberedTier(customer.name, customer.phoneNumber)
     }
 
-    fun toggleWholesaleMode(enabled: Boolean) {
-        updateEditor { state ->
-            val rates = _uiState.value.plantRates
-            var switchedCount = 0
-            var customCount = 0
+    fun lastTierFor(name: String, phone: String, excludeMemoId: String? = null): Boolean? {
+        val cleanName = name.trim()
+        val cleanPhone = phone.trim()
+        if (cleanName.isBlank() && cleanPhone.isBlank()) return null
 
-            val updatedItems = state.items.map { item ->
-                val link = state.rateLinks[item.id]
-                if (link != null) {
-                    if (link.customRate) {
-                        customCount++
-                        item
-                    } else {
-                        val plant = rates.firstOrNull { it.id == link.plantRateId }
-                        if (plant != null) {
-                            switchedCount++
-                            val newPrice = if (enabled) {
-                                if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
-                            } else plant.retailPrice
-                            item.copy(rate = newPrice)
-                        } else item
-                    }
+        val memos = _uiState.value.allMemos
+        val matchedMemo = memos
+            .filter { m -> excludeMemoId == null || m.id != excludeMemoId }
+            .filter { m ->
+                (cleanPhone.isNotEmpty() && m.customerMobile.trim() == cleanPhone) ||
+                    (cleanName.isNotEmpty() && m.customerName.trim().equals(cleanName, ignoreCase = true))
+            }
+            .maxByOrNull { it.createdAt }
+
+        return matchedMemo?.isWholesale
+    }
+
+    private fun applyWholesaleModeInternal(
+        state: EditorUiState,
+        enabled: Boolean,
+        tierTouched: Boolean,
+        messageOverride: String? = null
+    ): EditorUiState {
+        val rates = _uiState.value.plantRates
+        var switchedCount = 0
+        var customCount = 0
+
+        val updatedItems = state.items.map { item ->
+            val link = state.rateLinks[item.id]
+            if (link != null) {
+                if (link.customRate) {
+                    customCount++
+                    item
                 } else {
-                    // Check unlinked item matching description
-                    val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-                    if (plant != null && (item.rate == plant.retailPrice || (plant.wholesalePrice > 0.0 && item.rate == plant.wholesalePrice))) {
+                    val plant = rates.firstOrNull { it.id == link.plantRateId }
+                    if (plant != null) {
                         switchedCount++
                         val newPrice = if (enabled) {
                             if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
                         } else plant.retailPrice
                         item.copy(rate = newPrice)
-                    } else {
-                        item
-                    }
+                    } else item
+                }
+            } else {
+                val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
+                if (plant != null && (item.rate == plant.retailPrice || (plant.wholesalePrice > 0.0 && item.rate == plant.wholesalePrice))) {
+                    switchedCount++
+                    val newPrice = if (enabled) {
+                        if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
+                    } else plant.retailPrice
+                    item.copy(rate = newPrice)
+                } else {
+                    item
                 }
             }
+        }
 
-            val updatedLinks = state.rateLinks.toMutableMap()
-            for (item in updatedItems) {
-                if (!updatedLinks.containsKey(item.id)) {
-                    val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-                    if (plant != null) {
-                        updatedLinks[item.id] = RateLink(plantRateId = plant.id, customRate = false)
-                    }
+        val updatedLinks = state.rateLinks.toMutableMap()
+        for (item in updatedItems) {
+            if (!updatedLinks.containsKey(item.id)) {
+                val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
+                if (plant != null) {
+                    updatedLinks[item.id] = RateLink(plantRateId = plant.id, customRate = false)
                 }
             }
+        }
 
-            viewModelScope.launch {
+        viewModelScope.launch {
+            val msg = messageOverride ?: run {
                 val modeName = if (enabled) "Wholesale" else "Retail"
-                val msg = if (customCount > 0) {
+                if (customCount > 0) {
                     "Switched $switchedCount items to $modeName - $customCount custom price kept"
                 } else {
                     "Switched $switchedCount items to $modeName"
                 }
-                _events.emit(UiEvent.ShowMessage(msg))
             }
+            _events.emit(UiEvent.ShowMessage(msg))
+        }
 
-            state.copy(isWholesaleMode = enabled, items = updatedItems, rateLinks = updatedLinks)
+        return state.copy(
+            isWholesaleMode = enabled,
+            tierTouchedByUser = tierTouched,
+            items = updatedItems,
+            rateLinks = updatedLinks
+        )
+    }
+
+    fun toggleWholesaleMode(enabled: Boolean) {
+        updateEditor { state ->
+            applyWholesaleModeInternal(state, enabled, tierTouched = true, messageOverride = null)
+        }
+    }
+
+    fun checkAndAutoApplyRememberedTier(name: String, phone: String) {
+        val state = _uiState.value.editor
+        if (state.editingMemoId != null || state.tierTouchedByUser) return
+        val lastTier = lastTierFor(name, phone) ?: return
+        if (state.isWholesaleMode != lastTier) {
+            updateEditor { s ->
+                val customerLabel = name.trim().ifBlank { "Customer" }
+                val tierName = if (lastTier) "Wholesale" else "Retail"
+                applyWholesaleModeInternal(
+                    s,
+                    enabled = lastTier,
+                    tierTouched = false,
+                    messageOverride = "$customerLabel: $tierName (from last bill)"
+                )
+            }
+        }
+    }
+
+    fun addCurrentCustomerToLedger() {
+        val editor = _uiState.value.editor
+        val name = editor.customerName.trim()
+        val mobile = editor.customerMobile.trim()
+        val address = editor.customerAddress.trim()
+        if (name.isBlank() && mobile.isBlank()) return
+
+        val existing = _uiState.value.customers
+        if (CustomerMatcher.findMatch(existing, name, mobile) != null) {
+            viewModelScope.launch {
+                _events.emit(UiEvent.ShowMessage("Already in Ledger"))
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            val created = repository.addRegularCustomer(name, mobile, address)
+            _events.emit(UiEvent.ShowMessage("Added ${created.name} to Ledger customers"))
         }
     }
 
@@ -686,6 +759,7 @@ class CashmemoViewModel(
             notes = editor.notes,
             rawOcrText = editor.rawOcrText,
             sourceImageUri = editor.sourceImageUri,
+            isWholesale = editor.isWholesaleMode,
             createdAt = editor.createdAt,
             updatedAt = System.currentTimeMillis()
         )
@@ -747,6 +821,7 @@ class CashmemoViewModel(
             notes = editor.notes,
             rawOcrText = editor.rawOcrText,
             sourceImageUri = editor.sourceImageUri,
+            isWholesale = editor.isWholesaleMode,
             createdAt = editor.createdAt,
             updatedAt = System.currentTimeMillis()
         )
@@ -921,20 +996,32 @@ class CashmemoViewModel(
 
     fun createNewBillForCustomer(customer: CustomerProfile) {
         val settings = _uiState.value.settings
+        val initialEditor = EditorUiState(
+            editingMemoId = null,
+            memoNumber = settings.nextMemoNumber.toString(),
+            date = CashMemo.todayFormatted(),
+            customerName = customer.name,
+            customerMobile = customer.phoneNumber,
+            customerAddress = customer.address,
+            previousDuesText = if (customer.outstandingBalance > 0.009) formatEditableNumber(customer.outstandingBalance) else "",
+            rateLinks = emptyMap(),
+            tierTouchedByUser = false
+        )
+        val lastTier = lastTierFor(customer.name, customer.phoneNumber)
+        val finalEditor = if (lastTier != null && lastTier) {
+            initialEditor.copy(isWholesaleMode = true)
+        } else initialEditor
+
         _uiState.update {
             it.copy(
                 activeDestination = AppDestination.EDITOR,
-                editor = EditorUiState(
-                    editingMemoId = null,
-                    memoNumber = settings.nextMemoNumber.toString(),
-                    date = CashMemo.todayFormatted(),
-                    customerName = customer.name,
-                    customerMobile = customer.phoneNumber,
-                    customerAddress = customer.address,
-                    previousDuesText = if (customer.outstandingBalance > 0.009) formatEditableNumber(customer.outstandingBalance) else "",
-                    rateLinks = emptyMap()
-                )
+                editor = finalEditor
             )
+        }
+        if (lastTier != null && lastTier) {
+            viewModelScope.launch {
+                _events.emit(UiEvent.ShowMessage("${customer.name}: Wholesale (from last bill)"))
+            }
         }
     }
 
@@ -1369,6 +1456,8 @@ class CashmemoViewModel(
             paymentMethod = paymentMethod,
             paymentStatusNote = paymentStatusNote,
             notes = notes,
+            isWholesaleMode = isWholesale,
+            tierTouchedByUser = !isNewDraft,
             rawOcrText = rawOcrText,
             sourceImageUri = sourceImageUri,
             createdAt = createdAt,

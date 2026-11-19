@@ -43,6 +43,7 @@ data class EditorUiState(
     val paymentStatusNote: String = "Carry Forward",
     val notes: String = "",
     val isWholesaleMode: Boolean = false,
+    val tierTouchedByUser: Boolean = false,
     val rateLinks: Map<String, RateLink> = emptyMap(),
     val rawOcrText: String = "",
     val sourceImageUri: String = "",

@@ -54,6 +54,7 @@ data class BillDto(
     @SerializedName("paymentMethod") val paymentMethod: String = "Cash",
     @SerializedName("paymentStatusNote") val paymentStatusNote: String = "Carry Forward",
     @SerializedName("notes") val notes: String = "",
+    @SerializedName("isWholesale") val isWholesale: Boolean? = null,
     @SerializedName("createdAt") val createdAt: Long = 0L,
     @SerializedName("updatedAt") val updatedAt: Long = 0L
 )

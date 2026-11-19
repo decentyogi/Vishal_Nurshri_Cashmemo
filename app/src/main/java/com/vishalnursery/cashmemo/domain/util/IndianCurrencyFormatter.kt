@@ -73,7 +73,11 @@ object IndianCurrencyFormatter {
             !clean.equals("N/A", ignoreCase = true)
     }
 
-    fun resolveBillQrAmount(paidAmount: Double, totalPayable: Double): Double {
+    fun resolveBillQrAmount(paidAmount: Double, totalPayable: Double, balanceDue: Double): Double {
+        val cleanDue = if (balanceDue.isFinite()) balanceDue else 0.0
+        if (cleanDue > 0.009) {
+            return cleanDue
+        }
         val cleanPaid = if (paidAmount.isFinite()) paidAmount else 0.0
         val cleanTotal = if (totalPayable.isFinite()) totalPayable else 0.0
         return when {

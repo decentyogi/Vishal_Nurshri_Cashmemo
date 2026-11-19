@@ -439,7 +439,7 @@ class CashmemoRepository(
                     totalPaid = 0.0,
                     lastPromiseNote = "Fully Paid",
                     lastTransactionAt = System.currentTimeMillis()
-                )
+                ).toEntity()
             )
             return
         }
@@ -470,7 +470,7 @@ class CashmemoRepository(
                 totalPaid = round2(sumPaid),
                 lastPromiseNote = if (cleanBal > 0.009) latest.paymentStatusNote.ifBlank { "Carry Forward" } else "Fully Paid",
                 lastTransactionAt = latest.updatedAt
-            )
+            ).toEntity()
         )
     }
 }

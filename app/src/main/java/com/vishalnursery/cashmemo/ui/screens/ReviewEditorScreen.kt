@@ -941,7 +941,7 @@ fun ReviewEditorScreen(
                                                                     Text(
                                                                         text = matched.category,
                                                                         style = MaterialTheme.typography.labelSmall,
-                                                                        color = NurseryColors.InkLight
+                                                                        color = NurseryColors.MutedInk
                                                                     )
                                                                 }
                                                             }
@@ -1273,8 +1273,8 @@ fun ReviewEditorScreen(
                     // Calculation Summary Card
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         SummaryRow("Subtotal", IndianCurrencyFormatter.formatInr(calc.subtotal, settings.currencySymbol))
-                        if (calc.discountAmount > 0.009) {
-                            SummaryRow("Discount", "- ${IndianCurrencyFormatter.formatInr(calc.discountAmount, settings.currencySymbol)}", valueColor = NurseryColors.Maroon)
+                        if (calc.overallDiscountAmount > 0.009) {
+                            SummaryRow("Discount", "- ${IndianCurrencyFormatter.formatInr(calc.overallDiscountAmount, settings.currencySymbol)}", valueColor = NurseryColors.Maroon)
                         }
                         if (calc.taxAmount > 0.009) {
                             SummaryRow("Tax", "+ ${IndianCurrencyFormatter.formatInr(calc.taxAmount, settings.currencySymbol)}")

@@ -107,8 +107,22 @@ data class SyncDryRunResult(
     val onApply: (suspend () -> Unit)? = null
 )
 
+sealed interface UpdateState {
+    object Idle : UpdateState
+    object Checking : UpdateState
+    object UpToDate : UpdateState
+    data class Available(val version: String, val apkUrl: String, val sizeBytes: Long) : UpdateState
+    data class Downloading(val progress: Float, val bytesRead: Long, val totalBytes: Long) : UpdateState
+    data class ReadyToInstall(val apkFile: java.io.File) : UpdateState
+    data class Error(val message: String) : UpdateState
+}
+
 data class CashmemoUiState(
     val activeDestination: AppDestination = AppDestination.SCANNER,
+    val canGoBack: Boolean = false,
+    val updateState: UpdateState = UpdateState.Idle,
+    val showStartupUpdateDialog: Boolean = false,
+    val startupUpdateInfo: UpdateState.Available? = null,
     val settings: BusinessSettings = BusinessSettings(),
     val scanner: ScannerUiState = ScannerUiState(),
     val rateScan: RateScanUiState = RateScanUiState(),

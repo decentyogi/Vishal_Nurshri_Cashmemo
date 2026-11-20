@@ -53,12 +53,15 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -676,7 +679,7 @@ private fun PlantRatesTabPage(
                         )
                         DropdownMenuItem(
                             text = { Text("Export CSV (Excel)") },
-                            leadingIcon = { Icon(Icons.Default.ArrowUpward, contentDescription = null) },
+                            leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) },
                             onClick = {
                                 fileMenuOpen = false
                                 onExportCsv()
@@ -684,7 +687,7 @@ private fun PlantRatesTabPage(
                         )
                         DropdownMenuItem(
                             text = { Text("Export JSON") },
-                            leadingIcon = { Icon(Icons.Default.ArrowUpward, contentDescription = null) },
+                            leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) },
                             onClick = {
                                 fileMenuOpen = false
                                 onExportJson()
@@ -2411,17 +2414,17 @@ private fun CustomerProfileHistoryDialog(
                                             color = if (bill.balanceDue > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen
                                         )
                                     }
-                                    Row {
-                                        IconButton(onClick = { onEditBill(bill) }, modifier = Modifier.size(32.dp)) {
-                                            Icon(Icons.Default.Search, contentDescription = "View / Edit", modifier = Modifier.size(16.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(onClick = { onEditBill(bill) }, modifier = Modifier.size(40.dp)) {
+                                            Icon(Icons.Default.Edit, contentDescription = "Edit Bill", modifier = Modifier.size(16.dp))
                                         }
-                                        IconButton(onClick = { onPrintBill(bill) }, modifier = Modifier.size(32.dp)) {
-                                            Icon(Icons.Default.Payments, contentDescription = "Print", modifier = Modifier.size(16.dp))
+                                        IconButton(onClick = { onPrintBill(bill) }, modifier = Modifier.size(40.dp)) {
+                                            Icon(Icons.Default.Print, contentDescription = "Print Bill", modifier = Modifier.size(16.dp))
                                         }
-                                        IconButton(onClick = { onShareBillJpeg(bill) }, modifier = Modifier.size(32.dp)) {
+                                        IconButton(onClick = { onShareBillJpeg(bill) }, modifier = Modifier.size(40.dp)) {
                                             Icon(Icons.Default.Image, contentDescription = "Share JPEG", modifier = Modifier.size(16.dp))
                                         }
-                                        IconButton(onClick = { onShareBillPdf(bill) }, modifier = Modifier.size(32.dp)) {
+                                        IconButton(onClick = { onShareBillPdf(bill) }, modifier = Modifier.size(40.dp)) {
                                             Icon(Icons.Default.FileUpload, contentDescription = "Share PDF", modifier = Modifier.size(16.dp))
                                         }
                                     }

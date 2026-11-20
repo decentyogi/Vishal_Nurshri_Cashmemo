@@ -512,13 +512,20 @@ object BillDocumentRenderer {
         drawCenteredText(canvas, sumPaise, (col5 + col6) / 2f, summaryBaseline, textPaint(26f, CLASSIC_DARK_MAROON, bold = true))
 
         // --- Words & Settlement Breakdown Below Table ---
-        val badgeWidth = 430f
-        val badgeHeight = 150f
-        val badgeRight = cRight
-        val badgeLeft = cRight - badgeWidth
-        val badgeMargin = 30f
+        val badgeCenterX = (col4 + col5) / 2f
+        val dueAmountText = "₹ ${formatPlainMoney(memo.balanceDue)}"
+        val badgeHeight = 96f
+        val badgeWidth = if (isFinalPage && memo.balanceDue > 0.009) {
+            val probePaint = textPaint(46f, DUE_RED, bold = true)
+            val neededW = probePaint.measureText(dueAmountText) + 36f
+            minOf(380f, maxOf(300f, neededW))
+        } else {
+            300f
+        }
+        val badgeLeft = badgeCenterX - badgeWidth / 2f
+        val badgeRight = badgeCenterX + badgeWidth / 2f
 
-        val textWidth = if (isFinalPage) (badgeLeft - badgeMargin - cLeft).toInt() else contentWidth.toInt()
+        val textWidth = if (isFinalPage) (badgeLeft - 24f - cLeft).toInt() else contentWidth.toInt()
 
         val wordsY = tableBottom + 18f
         val wordsString = "शब्दों में: ${IndianCurrencyFormatter.convertToIndianRupees(summaryAmount)}"
@@ -574,11 +581,12 @@ object BillDocumentRenderer {
                 maxLines = 2
             )
             val line2Color = if (memo.balanceDue > 0.009) DUE_RED else GREEN_STAMP
-            drawFittingStaticText(
+            val line2Top = line1Top + h1 + 16f
+            val h2 = drawFittingStaticText(
                 canvas = canvas,
                 text = line2,
                 x = cLeft,
-                y = line1Top + h1 + 16f,
+                y = line2Top,
                 width = textWidth,
                 initialSize = 32f,
                 minSize = 24f,
@@ -587,81 +595,76 @@ object BillDocumentRenderer {
                 maxLines = 2
             )
 
-            // --- Big Status Badge on RIGHT side, FINAL PAGE ONLY ---
-            val badgeRect = RectF(badgeLeft, wordsY, badgeRight, wordsY + badgeHeight)
-            val cornerR = 12f
+            // --- Subtle Status Badge centered under amount column (Final Page Only) ---
+            val settlementTop = wordsY
+            val settlementBottom = line2Top + h2
+            val settlementCenterY = (settlementTop + settlementBottom) / 2f
+            val badgeTop = settlementCenterY - badgeHeight / 2f
+            val badgeRect = RectF(badgeLeft, badgeTop, badgeRight, badgeTop + badgeHeight)
+            val cornerR = 14f
 
             if (memo.balanceDue > 0.009) {
                 val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.parseColor("#FFF5F5")
+                    color = Color.argb(28, Color.red(DUE_RED), Color.green(DUE_RED), Color.blue(DUE_RED))
                     style = Paint.Style.FILL
                 }
                 val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = DUE_RED
                     style = Paint.Style.STROKE
-                    strokeWidth = 3f
+                    strokeWidth = 2f
                 }
                 canvas.drawRoundRect(badgeRect, cornerR, cornerR, fillPaint)
                 canvas.drawRoundRect(badgeRect, cornerR, cornerR, borderPaint)
 
-                val labelPaint = textPaint(25f, DUE_RED, bold = true).apply {
+                val labelPaint = textPaint(24f, DUE_RED, bold = true).apply {
                     textAlign = Paint.Align.CENTER
                 }
                 canvas.drawText(
-                    "शेष बकाया (Balance Due)",
+                    "Balance Due",
                     badgeRect.centerX(),
-                    badgeRect.top + 42f,
+                    badgeRect.top + 36f,
                     labelPaint
                 )
 
-                val amountText = "₹ ${formatPlainMoney(memo.balanceDue)}"
-                val maxAmountW = badgeWidth - 32f
-                var amountSize = 68f
-                while (amountSize > 34f) {
+                val maxAmountW = badgeWidth - 28f
+                var amountSize = 46f
+                while (amountSize > 26f) {
                     val p = textPaint(amountSize, DUE_RED, bold = true)
-                    if (p.measureText(amountText) <= maxAmountW) break
+                    if (p.measureText(dueAmountText) <= maxAmountW) break
                     amountSize -= 2f
                 }
                 val amountPaint = textPaint(amountSize, DUE_RED, bold = true).apply {
                     textAlign = Paint.Align.CENTER
                 }
                 canvas.drawText(
-                    amountText,
+                    dueAmountText,
                     badgeRect.centerX(),
-                    badgeRect.top + 114f,
+                    badgeRect.top + 78f,
                     amountPaint
                 )
             } else {
                 val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.parseColor("#E8F5E9")
+                    color = Color.argb(28, Color.red(GREEN_STAMP), Color.green(GREEN_STAMP), Color.blue(GREEN_STAMP))
                     style = Paint.Style.FILL
                 }
                 val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = GREEN_STAMP
                     style = Paint.Style.STROKE
-                    strokeWidth = 3f
+                    strokeWidth = 2f
                 }
                 canvas.drawRoundRect(badgeRect, cornerR, cornerR, fillPaint)
                 canvas.drawRoundRect(badgeRect, cornerR, cornerR, borderPaint)
 
-                val paidPaint = textPaint(68f, GREEN_STAMP, bold = true).apply {
+                val paidPaint = textPaint(46f, GREEN_STAMP, bold = true).apply {
                     textAlign = Paint.Align.CENTER
                 }
+                val fm = paidPaint.fontMetrics
+                val paidBaseline = badgeRect.centerY() - (fm.ascent + fm.descent) / 2f
                 canvas.drawText(
                     "✓ PAID",
                     badgeRect.centerX(),
-                    badgeRect.top + 72f,
+                    paidBaseline,
                     paidPaint
-                )
-
-                val subPaint = textPaint(28f, GREEN_STAMP, bold = true).apply {
-                    textAlign = Paint.Align.CENTER
-                }
-                canvas.drawText(
-                    "पूर्ण भुगतान",
-                    badgeRect.centerX(),
-                    badgeRect.top + 120f,
-                    subPaint
                 )
             }
 

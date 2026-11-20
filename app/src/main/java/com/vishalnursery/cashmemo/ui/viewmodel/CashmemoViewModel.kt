@@ -1,5 +1,6 @@
 package com.vishalnursery.cashmemo.ui.viewmodel
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -9,6 +10,8 @@ import com.vishalnursery.cashmemo.data.repository.CashmemoRepository
 import com.vishalnursery.cashmemo.data.repository.PlantRateImportPolicy
 import com.vishalnursery.cashmemo.data.repository.SyncMode
 import com.vishalnursery.cashmemo.data.repository.SyncScopes
+import com.vishalnursery.cashmemo.data.update.UpdateCheckResult
+import com.vishalnursery.cashmemo.data.update.UpdateChecker
 import com.vishalnursery.cashmemo.domain.model.AiExtractedItem
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
@@ -28,6 +31,8 @@ import com.vishalnursery.cashmemo.domain.util.AiTextParser
 import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -39,6 +44,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 
@@ -118,20 +124,169 @@ class CashmemoViewModel(
                 // Keep settings in sync
             }
         }
+
+        // Silent update check once on cold start
+        viewModelScope.launch {
+            delay(2500)
+            checkUpdateSilent()
+        }
     }
 
-    private var previousDestinationBeforeSettings: AppDestination = AppDestination.SCANNER
+    // --- Back Stack Navigation (Capped at 20, no duplicate destinations) ---
+    private val backStack = ArrayDeque<AppDestination>()
+
+    private fun go(
+        destination: AppDestination,
+        replaceCurrent: Boolean = false,
+        updateState: ((CashmemoUiState) -> CashmemoUiState)? = null
+    ) {
+        val current = _uiState.value.activeDestination
+        if (destination != current) {
+            if (!replaceCurrent) {
+                backStack.remove(current)
+                backStack.addLast(current)
+                while (backStack.size > 20) {
+                    backStack.removeFirst()
+                }
+            }
+            backStack.remove(destination)
+        }
+
+        _uiState.update { state ->
+            val updated = updateState?.invoke(state) ?: state
+            updated.copy(
+                activeDestination = destination,
+                canGoBack = backStack.isNotEmpty()
+            )
+        }
+    }
 
     fun navigateTo(destination: AppDestination) {
-        if (destination == AppDestination.SETTINGS && _uiState.value.activeDestination != AppDestination.SETTINGS) {
-            previousDestinationBeforeSettings = _uiState.value.activeDestination
+        go(destination, replaceCurrent = false)
+    }
+
+    fun navigateBack(): Boolean {
+        if (backStack.isEmpty()) return false
+        val previous = backStack.removeLast()
+        _uiState.update {
+            it.copy(
+                activeDestination = previous,
+                canGoBack = backStack.isNotEmpty()
+            )
         }
-        _uiState.update { it.copy(activeDestination = destination) }
+        return true
     }
 
     fun closeSettings() {
-        val target = previousDestinationBeforeSettings
-        _uiState.update { it.copy(activeDestination = target) }
+        if (!navigateBack()) {
+            go(AppDestination.SCANNER, replaceCurrent = true)
+        }
+    }
+
+    // --- In-App Updates (GitHub Releases) ---
+    private var downloadJob: Job? = null
+
+    private suspend fun checkUpdateSilent() {
+        runCatching {
+            when (val res = UpdateChecker.checkForUpdate()) {
+                is UpdateCheckResult.Available -> {
+                    _uiState.update {
+                        it.copy(
+                            showStartupUpdateDialog = true,
+                            startupUpdateInfo = UpdateState.Available(
+                                version = res.version,
+                                apkUrl = res.apkUrl,
+                                sizeBytes = res.sizeBytes
+                            )
+                        )
+                    }
+                }
+                else -> { /* Silent on UpToDate or error */ }
+            }
+        }
+    }
+
+    fun checkForUpdatesManual() {
+        _uiState.update { it.copy(updateState = UpdateState.Checking) }
+        viewModelScope.launch {
+            when (val res = UpdateChecker.checkForUpdate()) {
+                is UpdateCheckResult.Available -> {
+                    _uiState.update {
+                        it.copy(
+                            updateState = UpdateState.Available(
+                                version = res.version,
+                                apkUrl = res.apkUrl,
+                                sizeBytes = res.sizeBytes
+                            )
+                        )
+                    }
+                }
+                is UpdateCheckResult.UpToDate -> {
+                    _uiState.update { it.copy(updateState = UpdateState.UpToDate) }
+                }
+                is UpdateCheckResult.Error -> {
+                    _uiState.update { it.copy(updateState = UpdateState.Error(res.message)) }
+                }
+            }
+        }
+    }
+
+    fun startDownloadAndInstall(context: Context, available: UpdateState.Available) {
+        downloadJob?.cancel()
+        downloadJob = viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    updateState = UpdateState.Downloading(
+                        progress = 0f,
+                        bytesRead = 0L,
+                        totalBytes = available.sizeBytes
+                    )
+                )
+            }
+            runCatching {
+                UpdateChecker.downloadApk(
+                    context = context,
+                    apkUrl = available.apkUrl,
+                    targetVersion = available.version
+                ) { bytesRead, totalBytes ->
+                    val progress = if (totalBytes > 0) bytesRead.toFloat() / totalBytes else 0f
+                    _uiState.update {
+                        it.copy(
+                            updateState = UpdateState.Downloading(
+                                progress = progress.coerceIn(0f, 1f),
+                                bytesRead = bytesRead,
+                                totalBytes = totalBytes
+                            )
+                        )
+                    }
+                }
+            }.onSuccess { apkFile ->
+                _uiState.update { it.copy(updateState = UpdateState.ReadyToInstall(apkFile)) }
+                UpdateChecker.installApk(context, apkFile)
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        updateState = UpdateState.Error(
+                            "Download failed: ${err.localizedMessage ?: "Unknown error"}"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun installDownloadedApk(context: Context, file: File) {
+        UpdateChecker.installApk(context, file)
+    }
+
+    fun cancelUpdateDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        _uiState.update { it.copy(updateState = UpdateState.Idle) }
+    }
+
+    fun dismissStartupUpdateDialog() {
+        _uiState.update { it.copy(showStartupUpdateDialog = false) }
     }
 
     // --- Scanner, Gemini AI Vision & Quick-Edit Actions ---
@@ -379,9 +534,8 @@ class CashmemoViewModel(
             .mapIndexed { idx, item -> item.copy(serialNo = idx + 1) }
 
         val hasPaid = edited.paidAmount.isNotBlank()
-        _uiState.update {
+        go(AppDestination.EDITOR) {
             it.copy(
-                activeDestination = AppDestination.EDITOR,
                 scanner = it.scanner.copy(pendingAiReview = null),
                 editor = EditorUiState(
                     memoNumber = edited.memoNumber.ifBlank { settings.nextMemoNumber.toString() },
@@ -423,9 +577,8 @@ class CashmemoViewModel(
 
     fun startNewBlankMemo() {
         val settings = _uiState.value.settings
-        _uiState.update {
+        go(AppDestination.EDITOR) {
             it.copy(
-                activeDestination = AppDestination.EDITOR,
                 editor = EditorUiState(
                     editingMemoId = null,
                     memoNumber = settings.nextMemoNumber.toString(),
@@ -771,9 +924,8 @@ class CashmemoViewModel(
                     if (printAfterSave) {
                         _events.emit(UiEvent.TriggerPrint(saved, settings))
                     }
-                    _uiState.update {
+                    go(AppDestination.HISTORY, replaceCurrent = true) {
                         it.copy(
-                            activeDestination = AppDestination.HISTORY,
                             editor = EditorUiState(
                                 editingMemoId = null,
                                 memoNumber = settings.nextMemoNumber.toString(),
@@ -880,9 +1032,8 @@ class CashmemoViewModel(
     }
 
     fun editMemo(memo: CashMemo) {
-        _uiState.update {
+        go(AppDestination.EDITOR) {
             it.copy(
-                activeDestination = AppDestination.EDITOR,
                 editor = memo.toEditorState(isNewDraft = false)
             )
         }
@@ -890,9 +1041,8 @@ class CashmemoViewModel(
 
     fun duplicateMemo(memo: CashMemo) {
         val nextNum = _uiState.value.settings.nextMemoNumber.toString()
-        _uiState.update {
+        go(AppDestination.EDITOR) {
             it.copy(
-                activeDestination = AppDestination.EDITOR,
                 editor = memo.toEditorState(isNewDraft = true).copy(memoNumber = nextNum)
             )
         }
@@ -1012,9 +1162,8 @@ class CashmemoViewModel(
             initialEditor.copy(isWholesaleMode = true)
         } else initialEditor
 
-        _uiState.update {
+        go(AppDestination.EDITOR) {
             it.copy(
-                activeDestination = AppDestination.EDITOR,
                 editor = finalEditor
             )
         }

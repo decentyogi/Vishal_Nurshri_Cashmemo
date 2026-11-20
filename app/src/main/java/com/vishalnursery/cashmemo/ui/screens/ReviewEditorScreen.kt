@@ -1,12 +1,15 @@
 package com.vishalnursery.cashmemo.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.defaultMinSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,10 +23,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -62,6 +68,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +81,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +92,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
@@ -90,6 +100,8 @@ import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
+import com.vishalnursery.cashmemo.ui.components.CompactTextField
+import com.vishalnursery.cashmemo.ui.components.LocalBottomOverlayInset
 import com.vishalnursery.cashmemo.ui.components.UpiQrDialog
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import com.vishalnursery.cashmemo.ui.viewmodel.EditorUiState
@@ -139,6 +151,15 @@ fun ReviewEditorScreen(
     val calc = editorState.calculation
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
+    val totalsBringIntoViewRequester = remember { BringIntoViewRequester() }
+    val bottomOverlayInset = LocalBottomOverlayInset.current
+    val density = LocalDensity.current
+
+    DisposableEffect(Unit) {
+        onDispose {
+            bottomOverlayInset.value = 0.dp
+        }
+    }
 
     var showRawOcr by remember { mutableStateOf(false) }
     var showQrDialog by remember { mutableStateOf(false) }
@@ -370,40 +391,49 @@ fun ReviewEditorScreen(
 
                 Spacer(Modifier.width(8.dp))
 
-                // Large Retail | Wholesale Segmented Control
+                // Equal-Width Retail | Wholesale Segmented Control (Padded, Unclipped, Animated)
                 Surface(
                     shape = RoundedCornerShape(20.dp),
                     color = NurseryColors.CreamBackground,
                     border = BorderStroke(1.2.dp, NurseryColors.Maroon),
-                    modifier = Modifier.height(36.dp)
+                    modifier = Modifier.height(38.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (!editorState.isWholesaleMode) NurseryColors.Maroon else Color.Transparent,
+                        val retailBg by animateColorAsState(if (!editorState.isWholesaleMode) NurseryColors.Maroon else Color.Transparent, label = "retailBg")
+                        val retailText by animateColorAsState(if (!editorState.isWholesaleMode) Color.White else NurseryColors.Maroon, label = "retailText")
+                        val wholesaleBg by animateColorAsState(if (editorState.isWholesaleMode) NurseryColors.Maroon else Color.Transparent, label = "wholesaleBg")
+                        val wholesaleText by animateColorAsState(if (editorState.isWholesaleMode) Color.White else NurseryColors.Maroon, label = "wholesaleText")
+
+                        Box(
                             modifier = Modifier
+                                .defaultMinSize(minWidth = 88.dp)
+                                .height(38.dp)
+                                .background(color = retailBg, shape = RoundedCornerShape(20.dp))
                                 .clickable { if (editorState.isWholesaleMode) onToggleWholesale(false) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "Retail",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (!editorState.isWholesaleMode) FontWeight.ExtraBold else FontWeight.Medium,
-                                color = if (!editorState.isWholesaleMode) Color.White else NurseryColors.Maroon
+                                fontSize = 13.sp,
+                                fontWeight = if (!editorState.isWholesaleMode) FontWeight.Bold else FontWeight.Medium,
+                                color = retailText
                             )
                         }
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (editorState.isWholesaleMode) NurseryColors.Maroon else Color.Transparent,
+                        Box(
                             modifier = Modifier
+                                .defaultMinSize(minWidth = 88.dp)
+                                .height(38.dp)
+                                .background(color = wholesaleBg, shape = RoundedCornerShape(20.dp))
                                 .clickable { if (!editorState.isWholesaleMode) onToggleWholesale(true) }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "Wholesale",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (editorState.isWholesaleMode) FontWeight.ExtraBold else FontWeight.Medium,
-                                color = if (editorState.isWholesaleMode) Color.White else NurseryColors.Maroon
+                                fontSize = 13.sp,
+                                fontWeight = if (editorState.isWholesaleMode) FontWeight.Bold else FontWeight.Medium,
+                                color = wholesaleText
                             )
                         }
                     }
@@ -417,8 +447,8 @@ fun ReviewEditorScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Collapsible OCR Source Card when created from Camera/Gallery Scan
             if (editorState.rawOcrText.isNotBlank()) {
@@ -465,17 +495,17 @@ fun ReviewEditorScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    OutlinedTextField(
+                    CompactTextField(
                         value = editorState.memoNumber,
                         onValueChange = onUpdateMemoNumber,
                         label = { Text("Memo #", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
-                    OutlinedTextField(
+                    CompactTextField(
                         value = editorState.date,
                         onValueChange = onUpdateDate,
                         label = { Text("Date (DD/MM/YYYY)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -491,8 +521,8 @@ fun ReviewEditorScreen(
                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
                         text = "CUSTOMER / PARTY DETAILS",
@@ -502,7 +532,7 @@ fun ReviewEditorScreen(
                     )
 
                     // Customer / Nursery Name with Trailing "+ Add" / "Ledger" Pill
-                    OutlinedTextField(
+                    CompactTextField(
                         value = editorState.customerName,
                         onValueChange = onUpdateCustomerName,
                         label = { Text("Customer / Nursery Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -511,7 +541,11 @@ fun ReviewEditorScreen(
                             capitalization = KeyboardCapitalization.Words,
                             imeAction = ImeAction.Next
                         ),
-                        textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center,
+                            color = NurseryColors.InkDark
+                        ),
                         trailingIcon = {
                             if (isCustomerInLedger) {
                                 Surface(
@@ -520,7 +554,7 @@ fun ReviewEditorScreen(
                                     border = BorderStroke(1.dp, NurseryColors.BotanicalGreen),
                                     modifier = Modifier
                                         .padding(end = 4.dp)
-                                        .height(30.dp)
+                                        .height(28.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 8.dp),
@@ -531,7 +565,7 @@ fun ReviewEditorScreen(
                                             imageVector = Icons.Default.Check,
                                             contentDescription = null,
                                             tint = NurseryColors.BotanicalGreen,
-                                            modifier = Modifier.size(14.dp)
+                                            modifier = Modifier.size(13.dp)
                                         )
                                         Text(
                                             text = "Ledger",
@@ -551,7 +585,7 @@ fun ReviewEditorScreen(
                                     ),
                                     modifier = Modifier
                                         .padding(end = 4.dp)
-                                        .height(32.dp)
+                                        .height(28.dp)
                                         .clickable(enabled = canAddCustomer, onClick = onAddCustomerToLedger)
                                 ) {
                                     Row(
@@ -563,7 +597,7 @@ fun ReviewEditorScreen(
                                             imageVector = Icons.Default.PersonAdd,
                                             contentDescription = "Add to Ledger",
                                             tint = if (canAddCustomer) NurseryColors.Maroon else NurseryColors.MutedInk,
-                                            modifier = Modifier.size(14.dp)
+                                            modifier = Modifier.size(13.dp)
                                         )
                                         Text(
                                             text = "+ Add",
@@ -618,8 +652,8 @@ fun ReviewEditorScreen(
                         }
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactTextField(
                             value = editorState.customerMobile,
                             onValueChange = onUpdateCustomerMobile,
                             label = { Text("Mobile", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -636,7 +670,7 @@ fun ReviewEditorScreen(
                                     }
                                 }
                         )
-                        OutlinedTextField(
+                        CompactTextField(
                             value = editorState.customerAddress,
                             onValueChange = onUpdateCustomerAddress,
                             label = { Text("Address / Village", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -645,7 +679,11 @@ fun ReviewEditorScreen(
                                 capitalization = KeyboardCapitalization.Words,
                                 imeAction = ImeAction.Next
                             ),
-                            textStyle = LocalTextStyle.current.copy(textAlign = TextAlign.Center),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 15.sp,
+                                textAlign = TextAlign.Center,
+                                color = NurseryColors.InkDark
+                            ),
                             modifier = Modifier.weight(1.3f)
                         )
                     }
@@ -669,8 +707,8 @@ fun ReviewEditorScreen(
                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -708,9 +746,9 @@ fun ReviewEditorScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        .padding(horizontal = 8.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Surface(
                                         shape = RoundedCornerShape(4.dp),
@@ -741,23 +779,23 @@ fun ReviewEditorScreen(
                                     )
                                     IconButton(
                                         onClick = { onCloneItemRow(index) },
-                                        modifier = Modifier.size(26.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.ContentCopy,
                                             contentDescription = "Clone Row",
-                                            modifier = Modifier.size(15.dp)
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                     IconButton(
                                         onClick = { onRemoveItemRow(index) },
-                                        modifier = Modifier.size(26.dp)
+                                        modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.Delete,
                                             contentDescription = "Delete Row",
                                             tint = NurseryColors.DueRed,
-                                            modifier = Modifier.size(15.dp)
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
@@ -817,7 +855,7 @@ fun ReviewEditorScreen(
                                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(10.dp),
+                                    modifier = Modifier.padding(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Row(
@@ -848,7 +886,7 @@ fun ReviewEditorScreen(
                                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                             IconButton(
                                                 onClick = { onCloneItemRow(index) },
-                                                modifier = Modifier.size(30.dp)
+                                                modifier = Modifier.size(40.dp)
                                             ) {
                                                 Icon(
                                                     Icons.Default.ContentCopy,
@@ -858,7 +896,7 @@ fun ReviewEditorScreen(
                                             }
                                             IconButton(
                                                 onClick = { onRemoveItemRow(index) },
-                                                modifier = Modifier.size(30.dp)
+                                                modifier = Modifier.size(40.dp)
                                             ) {
                                                 Icon(
                                                     Icons.Default.Delete,
@@ -870,7 +908,7 @@ fun ReviewEditorScreen(
                                         }
                                     }
 
-                                    OutlinedTextField(
+                                    CompactTextField(
                                         value = item.description,
                                         onValueChange = {
                                             onUpdateItemDescription(index, it)
@@ -884,6 +922,19 @@ fun ReviewEditorScreen(
                                         ),
                                         keyboardActions = KeyboardActions(
                                             onNext = {
+                                                try { qtyFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            }
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .focusRequester(descFocusRequester)
+                                            .onFocusChanged { focusState ->
+                                                isDescFocused = focusState.isFocused
+                                                if (focusState.isFocused) {
+                                                    showSuggestions = true
+                                                }
+                                            }
+                                    )
                                                 try { qtyFocusRequester.requestFocus() } catch (_: Exception) {}
                                             }
                                         ),
@@ -1030,8 +1081,8 @@ fun ReviewEditorScreen(
                                         }
                                     }
 
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        CompactTextField(
                                             value = qtyInput,
                                             onValueChange = {
                                                 qtyInput = it
@@ -1052,7 +1103,7 @@ fun ReviewEditorScreen(
                                                 .weight(1f)
                                                 .focusRequester(qtyFocusRequester)
                                         )
-                                        OutlinedTextField(
+                                        CompactTextField(
                                             value = rateInput,
                                             onValueChange = {
                                                 rateInput = it
@@ -1153,12 +1204,13 @@ fun ReviewEditorScreen(
 
             // Totals & Settlement Section
             Card(
+                modifier = Modifier.bringIntoViewRequester(totalsBringIntoViewRequester),
                 colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
                         text = "TOTALS & SETTLEMENT",
@@ -1169,10 +1221,10 @@ fun ReviewEditorScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedTextField(
+                        CompactTextField(
                             value = editorState.discountText,
                             onValueChange = onUpdateDiscount,
                             label = { Text("Discount", maxLines = 1) },
@@ -1187,14 +1239,14 @@ fun ReviewEditorScreen(
                             border = BorderStroke(1.dp, if (editorState.discountType == DiscountType.AMOUNT) NurseryColors.BotanicalGreen else NurseryColors.OutlineSoft),
                             modifier = Modifier
                                 .clickable { onUpdateDiscountType(DiscountType.AMOUNT) }
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 2.dp)
                         ) {
                             Text(
                                 text = "₹",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = if (editorState.discountType == DiscountType.AMOUNT) NurseryColors.BotanicalGreen else NurseryColors.InkDark,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                             )
                         }
 
@@ -1204,18 +1256,18 @@ fun ReviewEditorScreen(
                             border = BorderStroke(1.dp, if (editorState.discountType == DiscountType.PERCENT) NurseryColors.BotanicalGreen else NurseryColors.OutlineSoft),
                             modifier = Modifier
                                 .clickable { onUpdateDiscountType(DiscountType.PERCENT) }
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 2.dp)
                         ) {
                             Text(
                                 text = "%",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = if (editorState.discountType == DiscountType.PERCENT) NurseryColors.BotanicalGreen else NurseryColors.InkDark,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                             )
                         }
 
-                        OutlinedTextField(
+                        CompactTextField(
                             value = editorState.taxPercentageText,
                             onValueChange = onUpdateTaxPercentage,
                             label = { Text("Tax %", maxLines = 1) },
@@ -1225,8 +1277,8 @@ fun ReviewEditorScreen(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactTextField(
                             value = editorState.previousDuesText,
                             onValueChange = onUpdatePreviousDues,
                             label = { Text("Previous Dues", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -1235,7 +1287,7 @@ fun ReviewEditorScreen(
                             modifier = Modifier.weight(1f)
                         )
 
-                        OutlinedTextField(
+                        CompactTextField(
                             value = editorState.paidAmountText,
                             onValueChange = onUpdatePaidAmount,
                             label = { Text("Paid (blank = full)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -1245,7 +1297,7 @@ fun ReviewEditorScreen(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("Cash", "Online", "Credit").forEach { method ->
                             FilterChip(
                                 selected = editorState.paymentMethod.equals(method, ignoreCase = true),
@@ -1256,7 +1308,7 @@ fun ReviewEditorScreen(
                         }
                     }
 
-                    OutlinedTextField(
+                    CompactTextField(
                         value = editorState.paymentStatusNote,
                         onValueChange = onUpdatePaymentNote,
                         label = { Text("Settlement Note (e.g. Carry Forward, Paid Online)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -1312,7 +1364,13 @@ fun ReviewEditorScreen(
         }
 
         // --- 3. PINNED BOTTOM BAR (<= 64dp, hidden when keyboard is open) ---
-        val isKeyboardOpen = WindowInsets.isImeVisible
+        val isKeyboardOpen = WindowInsets.isImeVisible || WindowInsets.ime.getBottom(density) > 0
+        LaunchedEffect(isKeyboardOpen) {
+            if (isKeyboardOpen) {
+                bottomOverlayInset.value = 0.dp
+            }
+        }
+
         AnimatedVisibility(
             visible = !isKeyboardOpen,
             enter = fadeIn() + expandVertically(),
@@ -1321,7 +1379,12 @@ fun ReviewEditorScreen(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 64.dp),
+                    .heightIn(max = 64.dp)
+                    .onSizeChanged { size ->
+                        if (!isKeyboardOpen) {
+                            bottomOverlayInset.value = with(density) { size.height.toDp() }
+                        }
+                    },
                 color = NurseryColors.PaperSurface,
                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
             ) {
@@ -1338,7 +1401,7 @@ fun ReviewEditorScreen(
                             .weight(1f)
                             .clickable {
                                 coroutineScope.launch {
-                                    scrollState.animateScrollTo(scrollState.maxValue)
+                                    totalsBringIntoViewRequester.bringIntoView()
                                 }
                             }
                     ) {
@@ -1348,20 +1411,22 @@ fun ReviewEditorScreen(
                             fontWeight = FontWeight.ExtraBold,
                             color = NurseryColors.DarkInk
                         )
-                        if (calc.balanceDue > 0.009) {
-                            Text(
-                                text = "Due: ${IndianCurrencyFormatter.formatInr(calc.balanceDue, settings.currencySymbol)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = NurseryColors.DueRed
-                            )
-                        } else {
-                            Text(
-                                text = "Fully Paid",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Medium,
-                                color = NurseryColors.BotanicalGreen
-                            )
+                        if (calc.totalPayable > 0.009) {
+                            if (calc.balanceDue > 0.009) {
+                                Text(
+                                    text = "Due: ${IndianCurrencyFormatter.formatInr(calc.balanceDue, settings.currencySymbol)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NurseryColors.DueRed
+                                )
+                            } else {
+                                Text(
+                                    text = "Fully Paid",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = NurseryColors.BotanicalGreen
+                                )
+                            }
                         }
                     }
 

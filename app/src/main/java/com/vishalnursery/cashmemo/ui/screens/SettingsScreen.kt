@@ -63,6 +63,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,7 +73,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -86,6 +90,7 @@ import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
+import com.vishalnursery.cashmemo.ui.components.LocalBottomOverlayInset
 import com.vishalnursery.cashmemo.ui.components.SettingsSection
 import com.vishalnursery.cashmemo.ui.components.SettingsSwitchRow
 import com.vishalnursery.cashmemo.ui.components.SettingsTextField
@@ -93,6 +98,7 @@ import com.vishalnursery.cashmemo.ui.components.SyncActionTile
 import com.vishalnursery.cashmemo.ui.components.UpiQrDialog
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import com.vishalnursery.cashmemo.ui.viewmodel.SyncDryRunResult
+import com.vishalnursery.cashmemo.ui.viewmodel.UpdateState
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -119,6 +125,11 @@ fun SettingsScreen(
     onRestoreSnapshot: (File) -> Unit,
     onExportJsonBackup: () -> Unit,
     onImportJsonBackup: (String) -> Unit,
+    updateState: UpdateState = UpdateState.Idle,
+    onCheckForUpdates: () -> Unit = {},
+    onStartDownloadAndInstall: (UpdateState.Available) -> Unit = {},
+    onCancelUpdateDownload: () -> Unit = {},
+    onInstallDownloadedApk: (File) -> Unit = {},
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -149,8 +160,23 @@ fun SettingsScreen(
     var aiExpanded by rememberSaveable { mutableStateOf(false) }
     var syncExpanded by rememberSaveable { mutableStateOf(false) }
     var backupExpanded by rememberSaveable { mutableStateOf(false) }
+    var updatesExpanded by rememberSaveable { mutableStateOf(true) }
 
     val isModified = draft != settings || nextMemoText != settings.nextMemoNumber.toString()
+    val bottomOverlayInset = LocalBottomOverlayInset.current
+    val density = LocalDensity.current
+
+    DisposableEffect(Unit) {
+        onDispose {
+            bottomOverlayInset.value = 0.dp
+        }
+    }
+
+    LaunchedEffect(isModified) {
+        if (!isModified) {
+            bottomOverlayInset.value = 0.dp
+        }
+    }
 
     fun handleBack() {
         if (isModified) {
@@ -789,6 +815,153 @@ fun SettingsScreen(
                 )
             }
 
+            // 6. App Updates Section (GitHub Releases)
+            SettingsSection(
+                title = "APP UPDATES",
+                expanded = updatesExpanded,
+                onToggle = { updatesExpanded = !updatesExpanded }
+            ) {
+                Text(
+                    text = "Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NurseryColors.DarkInk
+                )
+
+                when (updateState) {
+                    is UpdateState.Idle -> {
+                        Text(
+                            text = "Check for official updates directly from GitHub Releases.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = NurseryColors.MutedInk
+                        )
+                    }
+                    is UpdateState.Checking -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = NurseryColors.Maroon)
+                            Text(
+                                text = "Checking GitHub Releases...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = NurseryColors.MutedInk
+                            )
+                        }
+                    }
+                    is UpdateState.UpToDate -> {
+                        Text(
+                            text = "✓ App is up to date (v${BuildConfig.VERSION_NAME})",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = NurseryColors.BotanicalGreen
+                        )
+                    }
+                    is UpdateState.Available -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Update available: v${updateState.version}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = NurseryColors.BotanicalGreen
+                            )
+                            if (updateState.sizeBytes > 0) {
+                                val sizeMb = String.format(Locale.US, "%.1f MB", updateState.sizeBytes / (1024f * 1024f))
+                                Text(
+                                    text = "Download size: $sizeMb",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = NurseryColors.MutedInk
+                                )
+                            }
+                        }
+                    }
+                    is UpdateState.Downloading -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val percent = (updateState.progress * 100).toInt()
+                            val mbRead = String.format(Locale.US, "%.1f", updateState.bytesRead / (1024f * 1024f))
+                            val mbTotal = if (updateState.totalBytes > 0) {
+                                String.format(Locale.US, "%.1f MB", updateState.totalBytes / (1024f * 1024f))
+                            } else "..."
+                            Text(
+                                text = "Downloading update: $percent% ($mbRead / $mbTotal)",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = NurseryColors.DarkInk
+                            )
+                            LinearProgressIndicator(
+                                progress = { updateState.progress },
+                                modifier = Modifier.fillMaxWidth().height(6.dp),
+                                color = NurseryColors.BotanicalGreen,
+                                trackColor = NurseryColors.OutlineSoft
+                            )
+                        }
+                    }
+                    is UpdateState.ReadyToInstall -> {
+                        Text(
+                            text = "Download complete. Ready to install.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = NurseryColors.BotanicalGreen
+                        )
+                    }
+                    is UpdateState.Error -> {
+                        Text(
+                            text = updateState.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = NurseryColors.DueRed
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (updateState is UpdateState.Available) {
+                        Button(
+                            onClick = { onStartDownloadAndInstall(updateState) },
+                            colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen),
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Download & Install", fontWeight = FontWeight.Bold)
+                        }
+                    } else if (updateState is UpdateState.ReadyToInstall) {
+                        Button(
+                            onClick = { onInstallDownloadedApk(updateState.apkFile) },
+                            colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen),
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Install Now", fontWeight = FontWeight.Bold)
+                        }
+                    } else if (updateState is UpdateState.Downloading) {
+                        OutlinedButton(
+                            onClick = onCancelUpdateDownload,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Text("Cancel")
+                        }
+                    }
+
+                    if (updateState !is UpdateState.Downloading) {
+                        OutlinedButton(
+                            onClick = onCheckForUpdates,
+                            enabled = updateState !is UpdateState.Checking,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Text(if (updateState is UpdateState.Checking) "Checking..." else "Check for updates")
+                        }
+                    }
+                }
+            }
+
             // Small centered muted Build line footer
             Spacer(Modifier.height(8.dp))
             Text(
@@ -807,7 +980,13 @@ fun SettingsScreen(
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { size ->
+                        if (isModified) {
+                            bottomOverlayInset.value = with(density) { size.height.toDp() }
+                        }
+                    },
                 color = NurseryColors.PaperSurface,
                 shadowElevation = 8.dp,
                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft)

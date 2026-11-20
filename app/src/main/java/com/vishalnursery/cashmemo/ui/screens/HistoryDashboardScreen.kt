@@ -32,7 +32,7 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -207,7 +207,7 @@ fun HistoryDashboardScreen(
             },
             placeholder = {
                 Text(
-                    text = "Search memo #, customer, mobile, date...",
+                    text = "Search bills",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -270,7 +270,7 @@ fun HistoryDashboardScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = "Export CSV",
@@ -285,7 +285,7 @@ fun HistoryDashboardScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = "Backup JSON",
@@ -323,9 +323,7 @@ fun HistoryDashboardScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(groupedEntries, key = { it.key }) { (dateKey, dayMemos) ->
-                    val defaultExpanded = selectedDate.isNotBlank() ||
-                        searchQuery.isNotBlank() ||
-                        groupedEntries.firstOrNull()?.key == dateKey
+                    val defaultExpanded = selectedDate.isNotBlank() || searchQuery.isNotBlank()
                     val isExpanded = expandedDates[dateKey] ?: defaultExpanded
                     val daySales = round2(dayMemos.sumOf { it.totalPayable })
                     val dayCollected = round2(dayMemos.sumOf { it.paidAmount })

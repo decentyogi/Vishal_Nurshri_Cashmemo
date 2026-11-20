@@ -817,7 +817,9 @@ fun SettingsScreen(
 
             // 6. App Updates Section (GitHub Releases)
             SettingsSection(
-                title = "APP UPDATES",
+                title = "App updates",
+                summary = "GitHub Releases (v${BuildConfig.VERSION_NAME})",
+                icon = Icons.Default.CloudDownload,
                 expanded = updatesExpanded,
                 onToggle = { updatesExpanded = !updatesExpanded }
             ) {

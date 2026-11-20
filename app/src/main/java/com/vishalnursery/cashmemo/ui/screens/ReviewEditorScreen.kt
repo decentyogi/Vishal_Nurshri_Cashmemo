@@ -935,19 +935,6 @@ fun ReviewEditorScreen(
                                                 }
                                             }
                                     )
-                                                try { qtyFocusRequester.requestFocus() } catch (_: Exception) {}
-                                            }
-                                        ),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .focusRequester(descFocusRequester)
-                                            .onFocusChanged { focusState ->
-                                                isDescFocused = focusState.isFocused
-                                                if (focusState.isFocused) {
-                                                    showSuggestions = true
-                                                }
-                                            }
-                                    )
 
                                     if ((isDescFocused || showSuggestions) && item.description.isNotBlank()) {
                                         if (rateMatches.isNotEmpty()) {

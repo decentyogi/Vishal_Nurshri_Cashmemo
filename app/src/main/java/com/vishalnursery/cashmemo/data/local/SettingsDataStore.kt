@@ -12,6 +12,7 @@ import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
+import com.vishalnursery.cashmemo.domain.model.normalized
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -61,7 +62,7 @@ class SettingsDataStore(private val context: Context) {
             email = prefs[Keys.EMAIL] ?: defaults.email,
             addressLine1 = prefs[Keys.ADDRESS_LINE1] ?: defaults.addressLine1,
             addressLine2 = prefs[Keys.ADDRESS_LINE2] ?: defaults.addressLine2,
-            gstin = prefs[Keys.GSTIN]?.trim()?.takeUnless { it.isBlank() || it.equals("NaN", ignoreCase = true) } ?: defaults.gstin,
+            gstin = prefs[Keys.GSTIN]?.trim()?.uppercase()?.takeUnless { it.isBlank() || it.equals("NaN", ignoreCase = true) || it.equals("N/A", ignoreCase = true) } ?: defaults.gstin,
             currencySymbol = prefs[Keys.CURRENCY_SYMBOL] ?: defaults.currencySymbol,
             memoPrefix = prefs[Keys.MEMO_PREFIX] ?: defaults.memoPrefix,
             nextMemoNumber = prefs[Keys.NEXT_MEMO_NUMBER] ?: defaults.nextMemoNumber,
@@ -96,33 +97,34 @@ class SettingsDataStore(private val context: Context) {
     suspend fun getSettingsOnce(): BusinessSettings = settingsFlow.first()
 
     suspend fun saveSettings(settings: BusinessSettings) {
+        val normalized = settings.normalized()
         context.settingsDataStore.edit { prefs ->
-            prefs[Keys.SHOP_NAME_HINDI] = settings.shopNameHindi
-            prefs[Keys.SHOP_NAME_ENGLISH] = settings.shopNameEnglish
-            prefs[Keys.TAGLINE] = settings.tagline
-            prefs[Keys.PHONE] = settings.phone
-            prefs[Keys.EMAIL] = settings.email
-            prefs[Keys.ADDRESS_LINE1] = settings.addressLine1
-            prefs[Keys.ADDRESS_LINE2] = settings.addressLine2
-            prefs[Keys.GSTIN] = settings.gstin.trim().takeUnless { it.equals("NaN", ignoreCase = true) } ?: ""
-            prefs[Keys.CURRENCY_SYMBOL] = settings.currencySymbol.ifBlank { "₹" }
-            prefs[Keys.MEMO_PREFIX] = settings.memoPrefix
-            prefs[Keys.NEXT_MEMO_NUMBER] = settings.nextMemoNumber.coerceAtLeast(1)
-            prefs[Keys.DEFAULT_TAX_PCT] = settings.defaultTaxPercentage
-            prefs[Keys.ENABLE_TAX] = settings.enableTax
-            prefs[Keys.TAX_TYPE] = settings.taxType
-            prefs[Keys.UPI_VPA] = settings.upiVpa.trim()
-            prefs[Keys.UPI_DEFAULT_NOTE] = settings.upiDefaultNote.trim()
-            prefs[Keys.SIGNER_NAME] = settings.signerName
-            prefs[Keys.TERMS_NOTE] = settings.termsNote.ifBlank { defaults.termsNote }
-            prefs[Keys.SERVER_BASE_URL] = settings.serverBaseUrl.trim()
-            prefs[Keys.AUTO_SYNC_ENABLED] = settings.autoSyncEnabled
-            prefs[Keys.GEMINI_API_KEY] = settings.geminiApiKey.trim()
-            prefs[Keys.GEMINI_MODEL] = settings.geminiModel.trim().ifBlank { defaults.geminiModel }
-            prefs[Keys.TRANSLATION_MODE] = settings.translationMode.wireValue
-            prefs[Keys.BILL_EXPORT_LAYOUT] = settings.billExportLayout.wireValue
-            prefs[Keys.SCAN_ENGINE] = settings.scanEngine.wireValue
-            prefs[Keys.RATE_NAME_STYLE] = settings.rateNameStyle.wireValue
+            prefs[Keys.SHOP_NAME_HINDI] = normalized.shopNameHindi
+            prefs[Keys.SHOP_NAME_ENGLISH] = normalized.shopNameEnglish
+            prefs[Keys.TAGLINE] = normalized.tagline
+            prefs[Keys.PHONE] = normalized.phone
+            prefs[Keys.EMAIL] = normalized.email
+            prefs[Keys.ADDRESS_LINE1] = normalized.addressLine1
+            prefs[Keys.ADDRESS_LINE2] = normalized.addressLine2
+            prefs[Keys.GSTIN] = normalized.gstin
+            prefs[Keys.CURRENCY_SYMBOL] = normalized.currencySymbol
+            prefs[Keys.MEMO_PREFIX] = normalized.memoPrefix
+            prefs[Keys.NEXT_MEMO_NUMBER] = normalized.nextMemoNumber
+            prefs[Keys.DEFAULT_TAX_PCT] = normalized.defaultTaxPercentage
+            prefs[Keys.ENABLE_TAX] = normalized.enableTax
+            prefs[Keys.TAX_TYPE] = normalized.taxType
+            prefs[Keys.UPI_VPA] = normalized.upiVpa
+            prefs[Keys.UPI_DEFAULT_NOTE] = normalized.upiDefaultNote
+            prefs[Keys.SIGNER_NAME] = normalized.signerName
+            prefs[Keys.TERMS_NOTE] = normalized.termsNote
+            prefs[Keys.SERVER_BASE_URL] = normalized.serverBaseUrl
+            prefs[Keys.AUTO_SYNC_ENABLED] = normalized.autoSyncEnabled
+            prefs[Keys.GEMINI_API_KEY] = normalized.geminiApiKey
+            prefs[Keys.GEMINI_MODEL] = normalized.geminiModel
+            prefs[Keys.TRANSLATION_MODE] = normalized.translationMode.wireValue
+            prefs[Keys.BILL_EXPORT_LAYOUT] = normalized.billExportLayout.wireValue
+            prefs[Keys.SCAN_ENGINE] = normalized.scanEngine.wireValue
+            prefs[Keys.RATE_NAME_STYLE] = normalized.rateNameStyle.wireValue
         }
     }
 

@@ -1524,11 +1524,17 @@ class CashmemoViewModel(
 
     fun listSafetySnapshots(): List<File> = repository.syncManager.listSnapshots()
 
-    fun saveSettings(settings: BusinessSettings) {
+    fun saveSettings(settings: BusinessSettings, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             repository.saveSettings(settings)
-                .onSuccess { _events.emit(UiEvent.ShowMessage("Settings saved")) }
-                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Error: ${err.localizedMessage}")) }
+                .onSuccess {
+                    _events.emit(UiEvent.ShowMessage("Settings saved"))
+                    onResult(true)
+                }
+                .onFailure { err ->
+                    _events.emit(UiEvent.ShowMessage("Error: ${err.localizedMessage}"))
+                    onResult(false)
+                }
         }
     }
 

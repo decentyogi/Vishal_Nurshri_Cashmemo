@@ -386,7 +386,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     onStartDownloadAndInstall = { available -> viewModel.startDownloadAndInstall(context, available) },
                     onCancelUpdateDownload = viewModel::cancelUpdateDownload,
                     onInstallDownloadedApk = { file -> viewModel.installDownloadedApk(context, file) },
-                    onSaveSettings = viewModel::saveSettings,
+                    onSaveSettings = { s, onResult -> viewModel.saveSettings(s, onResult) },
                     onSavePermanentQr = { vpa, payee, note -> viewModel.savePermanentUpiConfig(vpa, payee, note) },
                     onDetectFlashModels = viewModel::detectAvailableGeminiModels,
                     onTestConnection = viewModel::testConnection,

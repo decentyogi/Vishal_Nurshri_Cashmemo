@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -20,11 +21,13 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -80,6 +83,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vishalnursery.cashmemo.BuildConfig
@@ -90,6 +94,7 @@ import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.ScanEngine
 import com.vishalnursery.cashmemo.domain.model.TranslationMode
+import com.vishalnursery.cashmemo.domain.model.normalized
 import com.vishalnursery.cashmemo.ui.components.LocalBottomOverlayInset
 import com.vishalnursery.cashmemo.ui.components.SettingsSection
 import com.vishalnursery.cashmemo.ui.components.SettingsSwitchRow
@@ -115,7 +120,7 @@ fun SettingsScreen(
     availableFlashModels: List<String>,
     isDetectingModels: Boolean,
     safetySnapshots: List<File>,
-    onSaveSettings: (BusinessSettings) -> Unit,
+    onSaveSettings: (BusinessSettings, onResult: (Boolean) -> Unit) -> Unit = { _, cb -> cb(true) },
     onSavePermanentQr: (String, String, String) -> Unit,
     onDetectFlashModels: (String?) -> Unit,
     onTestConnection: (String) -> Unit,
@@ -135,9 +140,36 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
 
-    var draft by remember(settings) { mutableStateOf(settings) }
-    var nextMemoText by remember(settings.nextMemoNumber) {
-        mutableStateOf(settings.nextMemoNumber.toString())
+    var baseline by remember { mutableStateOf(settings.normalized()) }
+    var draft by remember { mutableStateOf(baseline) }
+    var nextMemoText by remember { mutableStateOf(baseline.nextMemoNumber.toString()) }
+
+    val parsedNext = nextMemoText.toIntOrNull()?.coerceAtLeast(1) ?: draft.nextMemoNumber
+    val isModified = draft.normalized().copy(nextMemoNumber = parsedNext) != baseline
+
+    LaunchedEffect(settings) {
+        val norm = settings.normalized()
+        baseline = norm
+        if (!isModified) {
+            draft = norm
+            nextMemoText = norm.nextMemoNumber.toString()
+        }
+    }
+
+    val trimmedGstin = draft.gstin.trim()
+    val isGstinValid = trimmedGstin.isEmpty() || (trimmedGstin.length == 15 && trimmedGstin.all { it.isLetterOrDigit() })
+
+    fun commitDraft(onDone: () -> Unit = {}) {
+        if (!isGstinValid) return
+        val clean = draft.normalized().copy(nextMemoNumber = parsedNext)
+        onSaveSettings(clean) { success ->
+            if (success) {
+                draft = clean
+                nextMemoText = clean.nextMemoNumber.toString()
+                baseline = clean
+                onDone()
+            }
+        }
     }
 
     var syncBills by remember { mutableStateOf(true) }
@@ -162,7 +194,6 @@ fun SettingsScreen(
     var backupExpanded by rememberSaveable { mutableStateOf(false) }
     var updatesExpanded by rememberSaveable { mutableStateOf(true) }
 
-    val isModified = draft != settings || nextMemoText != settings.nextMemoNumber.toString()
     val bottomOverlayInset = LocalBottomOverlayInset.current
     val density = LocalDensity.current
 
@@ -191,19 +222,33 @@ fun SettingsScreen(
     if (showDiscardDialog) {
         AlertDialog(
             onDismissRequest = { showDiscardDialog = false },
-            title = { Text("Discard unsaved changes?") },
-            text = { Text("You have unsaved changes in Settings. Do you want to discard them?") },
+            title = { Text("Unsaved changes") },
+            text = { Text("You have unsaved changes in Settings. Do you want to save or discard them?") },
             confirmButton = {
-                Button(
-                    onClick = {
-                        showDiscardDialog = false
-                        draft = settings
-                        nextMemoText = settings.nextMemoNumber.toString()
-                        onClose()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.DueRed)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Discard")
+                    TextButton(
+                        onClick = {
+                            showDiscardDialog = false
+                            draft = baseline
+                            nextMemoText = baseline.nextMemoNumber.toString()
+                            onClose()
+                        }
+                    ) {
+                        Text("Discard", color = NurseryColors.DueRed, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            showDiscardDialog = false
+                            commitDraft { onClose() }
+                        },
+                        enabled = isGstinValid,
+                        colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon)
+                    ) {
+                        Text("Save", fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             dismissButton = {
@@ -246,6 +291,7 @@ fun SettingsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 8.dp)
                 .padding(bottom = 96.dp),
@@ -315,8 +361,15 @@ fun SettingsScreen(
                     Box(modifier = Modifier.weight(1f)) {
                         SettingsTextField(
                             value = draft.gstin,
-                            onValueChange = { draft = draft.copy(gstin = it) },
-                            label = "GSTIN (optional)"
+                            onValueChange = { input ->
+                                val filtered = input.uppercase().filter { it.isLetterOrDigit() }.take(15)
+                                draft = draft.copy(gstin = filtered)
+                            },
+                            label = "GSTIN (optional)",
+                            isError = !isGstinValid,
+                            supportingText = if (!isGstinValid) {
+                                { Text("Enter 15 letters/digits or leave blank", color = NurseryColors.DueRed, fontSize = 11.sp) }
+                            } else null
                         )
                     }
                 }
@@ -482,8 +535,8 @@ fun SettingsScreen(
                     OutlinedButton(
                         onClick = { onDetectFlashModels(draft.geminiApiKey) },
                         enabled = !isDetectingModels,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.height(56.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.height(48.dp)
                     ) {
                         if (isDetectingModels) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -567,11 +620,11 @@ fun SettingsScreen(
 
                 OutlinedButton(
                     onClick = {
-                        val nextNum = nextMemoText.toIntOrNull() ?: draft.nextMemoNumber
-                        onSaveSettings(draft.copy(nextMemoNumber = nextNum))
-                        onTestConnection(draft.serverBaseUrl)
+                        commitDraft {
+                            onTestConnection(draft.serverBaseUrl.trim())
+                        }
                     },
-                    enabled = !isSyncing && draft.serverBaseUrl.isNotBlank(),
+                    enabled = !isSyncing && draft.serverBaseUrl.isNotBlank() && isGstinValid,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -622,12 +675,12 @@ fun SettingsScreen(
                     )
                 }
 
-                val canSync = !isSyncing && draft.serverBaseUrl.isNotBlank()
+                val canSync = !isSyncing && draft.serverBaseUrl.isNotBlank() && isGstinValid
                 val scopes = SyncScopes(syncBills, syncCustomers, syncRates, syncSettings)
                 fun triggerSync(mode: SyncMode) {
-                    val nextNum = nextMemoText.toIntOrNull() ?: draft.nextMemoNumber
-                    onSaveSettings(draft.copy(nextMemoNumber = nextNum))
-                    onRequestSync(mode, scopes)
+                    commitDraft {
+                        onRequestSync(mode, scopes)
+                    }
                 }
 
                 SyncActionTile(
@@ -997,44 +1050,78 @@ fun SettingsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(WindowInsets.navigationBars.asPaddingValues())
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = "Unsaved changes",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = NurseryColors.DarkInk
-                    )
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(NurseryColors.Maroon, CircleShape)
+                        )
+                        Text(
+                            text = "Unsaved changes",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NurseryColors.DarkInk,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         OutlinedButton(
                             onClick = {
-                                draft = settings
-                                nextMemoText = settings.nextMemoNumber.toString()
+                                draft = baseline
+                                nextMemoText = baseline.nextMemoNumber.toString()
                             },
-                            shape = RoundedCornerShape(20.dp),
-                            modifier = Modifier.height(40.dp)
+                            shape = CircleShape,
+                            border = BorderStroke(1.dp, NurseryColors.Maroon),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier
+                                .width(104.dp)
+                                .height(44.dp)
                         ) {
-                            Text("Discard")
+                            Text(
+                                text = "Discard",
+                                color = NurseryColors.Maroon,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
 
                         Button(
-                            onClick = {
-                                val nextNum = nextMemoText.toIntOrNull() ?: draft.nextMemoNumber
-                                val cleanDraft = draft.copy(
-                                    geminiApiKey = draft.geminiApiKey.trim(),
-                                    geminiModel = draft.geminiModel.trim().ifBlank { "gemini-3.5-flash" },
-                                    nextMemoNumber = nextNum
-                                )
-                                onSaveSettings(cleanDraft)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.Maroon),
-                            shape = RoundedCornerShape(20.dp),
-                            modifier = Modifier.height(40.dp)
+                            onClick = { commitDraft() },
+                            enabled = isGstinValid,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NurseryColors.Maroon,
+                                contentColor = Color.White,
+                                disabledContainerColor = NurseryColors.OutlineSoft,
+                                disabledContentColor = NurseryColors.MutedInk
+                            ),
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier
+                                .width(104.dp)
+                                .height(44.dp)
                         ) {
-                            Text("Save changes", fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Save",
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
                     }
                 }

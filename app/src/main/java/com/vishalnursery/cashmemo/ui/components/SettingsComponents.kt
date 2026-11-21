@@ -128,7 +128,7 @@ fun SettingsSection(
                         .fillMaxWidth()
                         .padding(horizontal = 14.dp)
                         .padding(bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     content()
                 }
@@ -147,28 +147,22 @@ fun SettingsTextField(
     singleLine: Boolean = true,
     maxLines: Int = 1,
     keyboardType: KeyboardType = KeyboardType.Text,
+    isError: Boolean = false,
     trailingIcon: @Composable (() -> Unit)? = null,
     supportingText: @Composable (() -> Unit)? = null
 ) {
-    OutlinedTextField(
+    CompactTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
+        label = { Text(label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         placeholder = placeholder?.let { { Text(it, fontSize = 13.sp) } },
         singleLine = singleLine,
-        maxLines = maxLines,
+        maxLines = if (singleLine) 1 else maxLines,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType),
-        shape = RoundedCornerShape(12.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = NurseryColors.PaperSurface,
-            unfocusedContainerColor = NurseryColors.PaperSurface,
-            focusedBorderColor = NurseryColors.Maroon,
-            unfocusedBorderColor = NurseryColors.OutlineSoft,
-            focusedLabelColor = NurseryColors.Maroon,
-            cursorColor = NurseryColors.Maroon
-        ),
         trailingIcon = trailingIcon,
         supportingText = supportingText,
+        isError = isError,
+        shape = RoundedCornerShape(10.dp),
         modifier = modifier.fillMaxWidth()
     )
 }

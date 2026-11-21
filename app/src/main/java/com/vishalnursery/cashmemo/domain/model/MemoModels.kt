@@ -126,6 +126,24 @@ data class BusinessSettings(
     val rateNameStyle: RateNameStyle = RateNameStyle.ROMAN_WITH_HINDI
 )
 
+fun BusinessSettings.normalized(): BusinessSettings {
+    val defaults = BusinessSettings()
+    val cleanGstin = gstin.trim().uppercase().let {
+        if (it.equals("NaN", ignoreCase = true) || it.equals("N/A", ignoreCase = true)) "" else it
+    }
+    return copy(
+        gstin = cleanGstin,
+        currencySymbol = currencySymbol.ifBlank { "₹" },
+        nextMemoNumber = nextMemoNumber.coerceAtLeast(1),
+        upiVpa = upiVpa.trim(),
+        upiDefaultNote = upiDefaultNote.trim(),
+        termsNote = termsNote.ifBlank { defaults.termsNote },
+        serverBaseUrl = serverBaseUrl.trim(),
+        geminiApiKey = geminiApiKey.trim(),
+        geminiModel = geminiModel.trim().ifBlank { defaults.geminiModel }
+    )
+}
+
 enum class ScanEngine(val wireValue: String, val label: String) {
     GEMINI("gemini", "Gemini"),
     OTHER_AI("other_ai", "Other AI");

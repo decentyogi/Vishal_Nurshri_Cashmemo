@@ -943,15 +943,20 @@ object BillDocumentRenderer {
         if (isFinalPage) {
             val footerTop = (rowsBottom + 36f).coerceAtMost(1830f)
             val words = IndianCurrencyFormatter.convertToIndianRupees(memo.totalPayable)
-            drawStaticText(
+            val wordsHeight = drawStaticText(
                 canvas = canvas,
                 text = "In Words: $words",
                 x = cLeft,
                 y = footerTop,
                 width = 810,
-                paint = textPaint(24f, INK_DARK, bold = false),
+                paint = textPaint(30f, INK_DARK, bold = false),
                 maxLines = 3
             )
+
+            // Status Badge at top of Right Totals Column
+            val totLeft = 980f
+            val badgeCenterX = (totLeft + cRight) / 2f
+            drawModernStatusBadge(canvas, badgeCenterX, footerTop, memo.balanceDue)
 
             // UPI QR block (only if valid UPI VPA configured; encodes Paid Amount if > 0 else Total Payable)
             if (IndianCurrencyFormatter.isValidUpiVpa(settings.upiVpa)) {
@@ -964,7 +969,7 @@ object BillDocumentRenderer {
                 )
                 val qrBitmap = if (upiUri.isNotEmpty()) QrCodeGenerator.generateBitmap(upiUri, sizePx = 280) else null
                 if (qrBitmap != null) {
-                    val qrTop = footerTop + 100f
+                    val qrTop = footerTop + max(100f, wordsHeight + 24f)
                     val qrRect = RectF(cLeft, qrTop, cLeft + 220f, qrTop + 220f)
                     try {
                         canvas.drawBitmap(qrBitmap, null, qrRect, Paint(Paint.FILTER_BITMAP_FLAG))
@@ -987,8 +992,8 @@ object BillDocumentRenderer {
             }
 
             // Right Totals Column
-            val totLeft = 980f
-            var ty = footerTop + 24f
+            val badgeGap = (2340f - 282f - footerTop - 96f - 24f).coerceIn(0f, 20f)
+            var ty = footerTop + 24f + 96f + badgeGap
             val totPaint = textPaint(25f, INK_DARK, bold = false)
             val totBoldMaroon = textPaint(28f, MODERN_MAROON, bold = true)
 
@@ -1057,6 +1062,75 @@ object BillDocumentRenderer {
             2426f,
             textPaint(26f, MODERN_MAROON, bold = true)
         )
+    }
+
+    private fun drawModernStatusBadge(
+        canvas: Canvas,
+        centerX: Float,
+        top: Float,
+        balanceDue: Double
+    ) {
+        val isDue = balanceDue > 0.009
+        val amtStr = "₹ " + formatPlainMoney(balanceDue)
+        val badgeWidth = if (isDue) {
+            val mPaint = textPaint(46f, DUE_RED, bold = true)
+            max(300f, mPaint.measureText(amtStr) + 36f).coerceAtMost(380f)
+        } else {
+            300f
+        }
+        val badgeHeight = 96f
+        val badgeRect = RectF(centerX - badgeWidth / 2f, top, centerX + badgeWidth / 2f, top + badgeHeight)
+        val cornerR = 14f
+
+        if (isDue) {
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(28, Color.red(DUE_RED), Color.green(DUE_RED), Color.blue(DUE_RED))
+                style = Paint.Style.FILL
+            }
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = DUE_RED
+                style = Paint.Style.STROKE
+                strokeWidth = 2f
+            }
+            canvas.drawRoundRect(badgeRect, cornerR, cornerR, fillPaint)
+            canvas.drawRoundRect(badgeRect, cornerR, cornerR, borderPaint)
+
+            val labelPaint = textPaint(24f, DUE_RED, bold = true).apply {
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText("Balance Due", badgeRect.centerX(), badgeRect.top + 36f, labelPaint)
+
+            val maxAmountW = badgeWidth - 28f
+            var amountSize = 46f
+            while (amountSize > 26f) {
+                val p = textPaint(amountSize, DUE_RED, bold = true)
+                if (p.measureText(amtStr) <= maxAmountW) break
+                amountSize -= 2f
+            }
+            val amountPaint = textPaint(amountSize, DUE_RED, bold = true).apply {
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText(amtStr, badgeRect.centerX(), badgeRect.top + 78f, amountPaint)
+        } else {
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(28, Color.red(GREEN_STAMP), Color.green(GREEN_STAMP), Color.blue(GREEN_STAMP))
+                style = Paint.Style.FILL
+            }
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = GREEN_STAMP
+                style = Paint.Style.STROKE
+                strokeWidth = 2f
+            }
+            canvas.drawRoundRect(badgeRect, cornerR, cornerR, fillPaint)
+            canvas.drawRoundRect(badgeRect, cornerR, cornerR, borderPaint)
+
+            val paidPaint = textPaint(46f, GREEN_STAMP, bold = true).apply {
+                textAlign = Paint.Align.CENTER
+            }
+            val fontMetrics = paidPaint.fontMetrics
+            val paidBaseline = badgeRect.centerY() - (fontMetrics.descent + fontMetrics.ascent) / 2f
+            canvas.drawText("✓ PAID", badgeRect.centerX(), paidBaseline, paidPaint)
+        }
     }
 
     // -------------------------------------------------------------------------

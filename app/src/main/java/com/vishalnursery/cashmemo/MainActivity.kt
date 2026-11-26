@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.StickyNote2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vishalnursery.cashmemo.ui.components.BillDocumentRenderer
@@ -58,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.vishalnursery.cashmemo.ui.screens.CatalogLedgerScreen
 import com.vishalnursery.cashmemo.ui.screens.HistoryDashboardScreen
+import com.vishalnursery.cashmemo.ui.screens.NotesScreen
 import com.vishalnursery.cashmemo.ui.screens.ReviewEditorScreen
 import com.vishalnursery.cashmemo.ui.screens.ScannerScreen
 import com.vishalnursery.cashmemo.ui.screens.SettingsScreen
@@ -65,6 +68,7 @@ import com.vishalnursery.cashmemo.ui.theme.CashmemoTheme
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import com.vishalnursery.cashmemo.ui.viewmodel.AppDestination
 import com.vishalnursery.cashmemo.ui.viewmodel.CashmemoViewModel
+import com.vishalnursery.cashmemo.ui.viewmodel.NotesViewModel
 import com.vishalnursery.cashmemo.ui.viewmodel.RateReviewSource
 import com.vishalnursery.cashmemo.ui.viewmodel.UiEvent
 
@@ -78,7 +82,10 @@ class MainActivity : ComponentActivity() {
                 val viewModel: CashmemoViewModel = viewModel(
                     factory = CashmemoViewModel.Factory(app.repository, app.geminiVisionService)
                 )
-                CashmemoAppRoot(viewModel = viewModel)
+                val notesViewModel: NotesViewModel = viewModel(
+                    factory = NotesViewModel.Factory(app.notesRepository)
+                )
+                CashmemoAppRoot(viewModel = viewModel, notesViewModel = notesViewModel)
             }
         }
     }
@@ -86,11 +93,22 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
+fun CashmemoAppRoot(
+    viewModel: CashmemoViewModel,
+    notesViewModel: NotesViewModel
+) {
     val uiState by viewModel.uiState.collectAsState()
+    val notesUiState by notesViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val bottomOverlayInset = remember { mutableStateOf(0.dp) }
     val context = LocalContext.current
+
+    LaunchedEffect(notesViewModel) {
+        notesViewModel.messages.collect { msg ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -146,7 +164,8 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
         AppDestination.EDITOR to Icons.Default.EditNote,
         AppDestination.LEDGER to Icons.Default.People,
         AppDestination.SCANNER to Icons.Default.DocumentScanner,
-        AppDestination.HISTORY to Icons.Default.History
+        AppDestination.HISTORY to Icons.Default.History,
+        AppDestination.NOTES to Icons.Default.StickyNote2
     )
 
     CompositionLocalProvider(LocalBottomOverlayInset provides bottomOverlayInset) {
@@ -247,7 +266,14 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                             selected = uiState.activeDestination == destination,
                             onClick = { viewModel.navigateTo(destination) },
                             icon = { Icon(icon, contentDescription = destination.label) },
-                            label = { Text(destination.label) }
+                            label = {
+                                Text(
+                                    text = destination.label,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         )
                     }
                 }
@@ -385,6 +411,21 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     onDeletePlantRate = viewModel::deletePlantRate,
                     onExportPlantRatesJson = viewModel::exportPlantRatesJson,
                     onExportPlantRatesCsv = viewModel::exportPlantRatesCsv,
+                    modifier = contentModifier
+                )
+
+                AppDestination.NOTES -> NotesScreen(
+                    notesState = notesUiState,
+                    customers = uiState.customers,
+                    pendingOrders = uiState.allOrders.filter { it.orderStatus == com.vishalnursery.cashmemo.domain.model.OrderStatus.PENDING },
+                    onSearchQueryChange = notesViewModel::updateSearchQuery,
+                    onTodoFilterChange = notesViewModel::updateTodoFilter,
+                    onSaveNote = notesViewModel::saveNote,
+                    onTogglePinNote = notesViewModel::togglePinNote,
+                    onDeleteNote = notesViewModel::deleteNote,
+                    onSaveTodo = notesViewModel::saveTodo,
+                    onToggleTodoDone = notesViewModel::toggleTodoDone,
+                    onDeleteTodo = notesViewModel::deleteTodo,
                     modifier = contentModifier
                 )
 

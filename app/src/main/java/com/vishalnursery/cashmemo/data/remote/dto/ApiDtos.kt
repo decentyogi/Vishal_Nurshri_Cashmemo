@@ -120,6 +120,30 @@ data class PaymentDto(
     @SerializedName("allocations") val allocations: List<PaymentAllocationDto>? = null
 )
 
+data class NoteDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("title") val title: String = "",
+    @SerializedName("body") val body: String = "",
+    @SerializedName("customerId") val customerId: String = "",
+    @SerializedName("customerName") val customerName: String = "",
+    @SerializedName("isPinned") val isPinned: Boolean = false,
+    @SerializedName("createdAt") val createdAt: Long = 0L,
+    @SerializedName("updatedAt") val updatedAt: Long = 0L
+)
+
+data class TodoDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("title") val title: String = "",
+    @SerializedName("dueDate") val dueDate: String = "",
+    @SerializedName("priority") val priority: String = "MEDIUM",
+    @SerializedName("customerId") val customerId: String = "",
+    @SerializedName("customerName") val customerName: String = "",
+    @SerializedName("isDone") val isDone: Boolean = false,
+    @SerializedName("doneAt") val doneAt: Long = 0L,
+    @SerializedName("createdAt") val createdAt: Long = 0L,
+    @SerializedName("updatedAt") val updatedAt: Long = 0L
+)
+
 data class BackupPayloadDto(
     @SerializedName("version") val version: Int = 7,
     @SerializedName("appName") val appName: String = "Vishal_Nurshri_Cashmemo_Android",
@@ -128,5 +152,7 @@ data class BackupPayloadDto(
     @SerializedName("bills") val bills: List<BillDto>? = emptyList(),
     @SerializedName("customers") val customers: List<CustomerDto>? = emptyList(),
     @SerializedName("rates") val rates: List<PlantRateDto>? = emptyList(),
-    @SerializedName("payments") val payments: List<PaymentDto>? = emptyList()
+    @SerializedName("payments") val payments: List<PaymentDto>? = emptyList(),
+    @SerializedName("notes") val notes: List<NoteDto>? = emptyList(),
+    @SerializedName("todos") val todos: List<TodoDto>? = emptyList()
 )

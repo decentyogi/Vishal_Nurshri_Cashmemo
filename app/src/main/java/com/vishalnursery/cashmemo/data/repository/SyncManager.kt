@@ -63,6 +63,8 @@ class SyncManager(
     private val customerDao = database.customerDao()
     private val rateDao = database.plantRateDao()
     private val paymentDao = database.paymentDao()
+    private val noteDao = database.noteDao()
+    private val todoDao = database.todoDao()
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
     private val backupDir: File by lazy {
@@ -93,6 +95,8 @@ class SyncManager(
         val customers = customerDao.getAllCustomersOnce().map { it.toDomain().toDto() }
         val rates = rateDao.getAllRatesOnce().map { it.toDomain().toDto() }
         val payments = paymentDao.getAllPaymentsOnce().map { it.toDomain().toDto() }
+        val notes = noteDao.getAllNotesOnce().map { it.toDomain().toDto() }
+        val todos = todoDao.getAllTodosOnce().map { it.toDomain().toDto() }
         val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
@@ -104,7 +108,9 @@ class SyncManager(
             bills = memos,
             customers = customers,
             rates = rates,
-            payments = payments
+            payments = payments,
+            notes = notes,
+            todos = todos
         )
         val file = File(backupDir, "snapshot_${System.currentTimeMillis()}.json")
         file.writeText(gson.toJson(payload), Charsets.UTF_8)
@@ -158,7 +164,15 @@ class SyncManager(
                 paymentDao.upsertPaymentWithAllocations(domain.toEntity(), domain.toAllocationEntities())
                 paymentsReinserted++
             }
-            "Restored from snapshot: $memosReinserted bills, $customersReinserted customers, $ratesReinserted plant rates, $paymentsReinserted payments"
+            val notesReinserted = payload.notes.orEmpty().map { it.toDomain().toEntity() }
+            if (notesReinserted.isNotEmpty()) {
+                noteDao.upsertAll(notesReinserted)
+            }
+            val todosReinserted = payload.todos.orEmpty().map { it.toDomain().toEntity() }
+            if (todosReinserted.isNotEmpty()) {
+                todoDao.upsertAll(todosReinserted)
+            }
+            "Restored from snapshot: $memosReinserted bills, $customersReinserted customers, $ratesReinserted plant rates, $paymentsReinserted payments, ${notesReinserted.size} notes, ${todosReinserted.size} tasks"
         }
     }
 

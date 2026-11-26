@@ -4,27 +4,34 @@ import com.vishalnursery.cashmemo.data.local.entity.CashMemoEntity
 import com.vishalnursery.cashmemo.data.local.entity.CustomerEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoItemEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoWithItems
+import com.vishalnursery.cashmemo.data.local.entity.NoteEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentAllocationEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentWithAllocations
 import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
+import com.vishalnursery.cashmemo.data.local.entity.TodoEntity
 import com.vishalnursery.cashmemo.data.remote.dto.BillDto
 import com.vishalnursery.cashmemo.data.remote.dto.CustomerDto
 import com.vishalnursery.cashmemo.data.remote.dto.MemoItemDto
+import com.vishalnursery.cashmemo.data.remote.dto.NoteDto
 import com.vishalnursery.cashmemo.data.remote.dto.PaymentAllocationDto
 import com.vishalnursery.cashmemo.data.remote.dto.PaymentDto
 import com.vishalnursery.cashmemo.data.remote.dto.PlantRateDto
 import com.vishalnursery.cashmemo.data.remote.dto.SettingsDto
+import com.vishalnursery.cashmemo.data.remote.dto.TodoDto
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DiscountType
+import com.vishalnursery.cashmemo.domain.model.GeneralNote
 import com.vishalnursery.cashmemo.domain.model.MemoItem
 import com.vishalnursery.cashmemo.domain.model.MemoType
 import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PaymentAllocation
 import com.vishalnursery.cashmemo.domain.model.PlantRate
+import com.vishalnursery.cashmemo.domain.model.TodoPriority
+import com.vishalnursery.cashmemo.domain.model.TodoTask
 
 fun MemoWithItems.toDomain(laterPaid: Double = 0.0): CashMemo = CashMemo(
     id = memo.id,
@@ -404,3 +411,99 @@ fun PaymentDto.toDomain(): CustomerPayment {
         }
     )
 }
+
+fun NoteEntity.toDomain(): GeneralNote = GeneralNote(
+    id = id,
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun GeneralNote.toEntity(): NoteEntity = NoteEntity(
+    id = id,
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun GeneralNote.toDto(): NoteDto = NoteDto(
+    id = id,
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun NoteDto.toDomain(): GeneralNote = GeneralNote(
+    id = id.ifBlank { "note_${System.currentTimeMillis()}" },
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
+    updatedAt = if (updatedAt > 0L) updatedAt else System.currentTimeMillis()
+)
+
+fun TodoEntity.toDomain(): TodoTask = TodoTask(
+    id = id,
+    title = title,
+    dueDate = dueDate,
+    priority = TodoPriority.fromWire(priority),
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun TodoTask.toEntity(): TodoEntity = TodoEntity(
+    id = id,
+    title = title,
+    dueDate = dueDate,
+    priority = priority.wireValue,
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun TodoTask.toDto(): TodoDto = TodoDto(
+    id = id,
+    title = title,
+    dueDate = dueDate,
+    priority = priority.wireValue,
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun TodoDto.toDomain(): TodoTask = TodoTask(
+    id = id.ifBlank { "todo_${System.currentTimeMillis()}" },
+    title = title,
+    dueDate = dueDate,
+    priority = TodoPriority.fromWire(priority),
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
+    updatedAt = if (updatedAt > 0L) updatedAt else System.currentTimeMillis()
+)

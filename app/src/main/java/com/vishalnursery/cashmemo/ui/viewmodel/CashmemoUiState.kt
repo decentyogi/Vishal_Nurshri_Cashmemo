@@ -22,6 +22,7 @@ enum class AppDestination(val label: String) {
     EDITOR("Review"),
     HISTORY("History"),
     LEDGER("Ledger"),
+    NOTES("Notes"),
     SETTINGS("Settings")
 }
 

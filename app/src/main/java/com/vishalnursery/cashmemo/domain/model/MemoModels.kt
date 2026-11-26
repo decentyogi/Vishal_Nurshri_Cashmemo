@@ -366,6 +366,48 @@ data class OrderStats(
     val pendingBalance: Double = 0.0
 )
 
+data class GeneralNote(
+    val id: String = "note_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(5)}",
+    val title: String = "",
+    val body: String = "",
+    val customerId: String = "",
+    val customerName: String = "",
+    val isPinned: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+enum class TodoPriority(val wireValue: String, val label: String) {
+    LOW("LOW", "Low"),
+    MEDIUM("MEDIUM", "Medium"),
+    HIGH("HIGH", "High");
+
+    companion object {
+        fun fromWire(value: String?): TodoPriority =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) } ?: MEDIUM
+    }
+}
+
+data class TodoTask(
+    val id: String = "todo_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(5)}",
+    val title: String = "",
+    val dueDate: String = "",
+    val priority: TodoPriority = TodoPriority.MEDIUM,
+    val customerId: String = "",
+    val customerName: String = "",
+    val isDone: Boolean = false,
+    val doneAt: Long = 0L,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+enum class TodoFilter(val label: String) {
+    ALL("All"),
+    PENDING("Pending"),
+    OVERDUE("Overdue"),
+    DONE("Done")
+}
+
 fun Double.finiteOrZero(): Double = if (isFinite()) this else 0.0
 
 fun round2(value: Double): Double = if (value.isFinite()) (value * 100.0).roundToInt() / 100.0 else 0.0

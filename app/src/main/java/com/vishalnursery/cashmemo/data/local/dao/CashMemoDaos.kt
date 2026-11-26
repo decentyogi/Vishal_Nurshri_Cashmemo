@@ -9,10 +9,12 @@ import com.vishalnursery.cashmemo.data.local.entity.CashMemoEntity
 import com.vishalnursery.cashmemo.data.local.entity.CustomerEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoItemEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoWithItems
+import com.vishalnursery.cashmemo.data.local.entity.NoteEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentAllocationEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentWithAllocations
 import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
+import com.vishalnursery.cashmemo.data.local.entity.TodoEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -171,4 +173,42 @@ interface PaymentDao {
 
     @Query("DELETE FROM payments WHERE id = :id")
     suspend fun deletePaymentById(id: String)
+}
+
+@Dao
+interface NoteDao {
+
+    @Query("SELECT * FROM notes ORDER BY isPinned DESC, updatedAt DESC")
+    fun observeAllNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes ORDER BY isPinned DESC, updatedAt DESC")
+    suspend fun getAllNotesOnce(): List<NoteEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertNote(note: NoteEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(notes: List<NoteEntity>)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun deleteNoteById(id: String)
+}
+
+@Dao
+interface TodoDao {
+
+    @Query("SELECT * FROM todos ORDER BY isDone ASC, createdAt DESC")
+    fun observeAllTodos(): Flow<List<TodoEntity>>
+
+    @Query("SELECT * FROM todos ORDER BY isDone ASC, createdAt DESC")
+    suspend fun getAllTodosOnce(): List<TodoEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTodo(todo: TodoEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(todos: List<TodoEntity>)
+
+    @Query("DELETE FROM todos WHERE id = :id")
+    suspend fun deleteTodoById(id: String)
 }

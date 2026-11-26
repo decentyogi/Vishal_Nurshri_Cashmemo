@@ -8,14 +8,18 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.vishalnursery.cashmemo.data.local.dao.CustomerDao
 import com.vishalnursery.cashmemo.data.local.dao.MemoDao
+import com.vishalnursery.cashmemo.data.local.dao.NoteDao
 import com.vishalnursery.cashmemo.data.local.dao.PaymentDao
 import com.vishalnursery.cashmemo.data.local.dao.PlantRateDao
+import com.vishalnursery.cashmemo.data.local.dao.TodoDao
 import com.vishalnursery.cashmemo.data.local.entity.CashMemoEntity
 import com.vishalnursery.cashmemo.data.local.entity.CustomerEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoItemEntity
+import com.vishalnursery.cashmemo.data.local.entity.NoteEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentAllocationEntity
 import com.vishalnursery.cashmemo.data.local.entity.PaymentEntity
 import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
+import com.vishalnursery.cashmemo.data.local.entity.TodoEntity
 
 @Database(
     entities = [
@@ -24,7 +28,9 @@ import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
         CustomerEntity::class,
         PlantRateEntity::class,
         PaymentEntity::class,
-        PaymentAllocationEntity::class
+        PaymentAllocationEntity::class,
+        NoteEntity::class,
+        TodoEntity::class
     ],
     version = 4,
     exportSchema = false
@@ -34,6 +40,8 @@ abstract class CashmemoDatabase : RoomDatabase() {
     abstract fun customerDao(): CustomerDao
     abstract fun plantRateDao(): PlantRateDao
     abstract fun paymentDao(): PaymentDao
+    abstract fun noteDao(): NoteDao
+    abstract fun todoDao(): TodoDao
 
     companion object {
         @Volatile
@@ -84,6 +92,36 @@ abstract class CashmemoDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cash_memos ADD COLUMN memoType TEXT NOT NULL DEFAULT 'CASH'")
                 db.execSQL("ALTER TABLE cash_memos ADD COLUMN orderStatus TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE cash_memos ADD COLUMN linkedMemoId TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `notes` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `title` TEXT NOT NULL,
+                        `body` TEXT NOT NULL,
+                        `customerId` TEXT NOT NULL,
+                        `customerName` TEXT NOT NULL,
+                        `isPinned` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `todos` (
+                        `id` TEXT NOT NULL PRIMARY KEY,
+                        `title` TEXT NOT NULL,
+                        `dueDate` TEXT NOT NULL,
+                        `priority` TEXT NOT NULL,
+                        `customerId` TEXT NOT NULL,
+                        `customerName` TEXT NOT NULL,
+                        `isDone` INTEGER NOT NULL,
+                        `doneAt` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
             }
         }
 

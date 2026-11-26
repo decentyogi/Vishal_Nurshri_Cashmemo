@@ -56,6 +56,8 @@ class CashmemoRepository(
     private val customerDao = database.customerDao()
     private val rateDao = database.plantRateDao()
     private val paymentDao = database.paymentDao()
+    private val noteDao = database.noteDao()
+    private val todoDao = database.todoDao()
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
     val syncManager: SyncManager = SyncManager(context, database, settingsDataStore)
@@ -416,6 +418,8 @@ class CashmemoRepository(
         val customers = customerDao.getAllCustomersOnce().map { it.toDomain().toDto() }
         val rates = rateDao.getAllRatesOnce().map { it.toDomain().toDto() }
         val payments = paymentDao.getAllPaymentsOnce().map { it.toDomain().toDto() }
+        val notes = noteDao.getAllNotesOnce().map { it.toDomain().toDto() }
+        val todos = todoDao.getAllTodosOnce().map { it.toDomain().toDto() }
         val isoFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
@@ -427,7 +431,9 @@ class CashmemoRepository(
             bills = memos,
             customers = customers,
             rates = rates,
-            payments = payments
+            payments = payments,
+            notes = notes,
+            todos = todos
         )
         gson.toJson(payload)
     }
@@ -452,7 +458,15 @@ class CashmemoRepository(
             for (p in importedPayments) {
                 paymentDao.upsertPaymentWithAllocations(p.toEntity(), p.toAllocationEntities())
             }
-            "Imported ${importedMemos.size} memos, ${importedCustomers.size} customers, ${importedRates.size} rates, ${importedPayments.size} payments"
+            val importedNotes = payload.notes.orEmpty().map { it.toDomain().toEntity() }
+            if (importedNotes.isNotEmpty()) {
+                noteDao.upsertAll(importedNotes)
+            }
+            val importedTodos = payload.todos.orEmpty().map { it.toDomain().toEntity() }
+            if (importedTodos.isNotEmpty()) {
+                todoDao.upsertAll(importedTodos)
+            }
+            "Imported ${importedMemos.size} memos, ${importedCustomers.size} customers, ${importedRates.size} rates, ${importedPayments.size} payments, ${importedNotes.size} notes, ${importedTodos.size} tasks"
         }
     }
 

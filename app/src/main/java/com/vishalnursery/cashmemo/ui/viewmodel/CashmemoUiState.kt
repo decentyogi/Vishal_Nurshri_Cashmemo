@@ -118,7 +118,7 @@ sealed interface UpdateState {
 }
 
 data class CashmemoUiState(
-    val activeDestination: AppDestination = AppDestination.SCANNER,
+    val activeDestination: AppDestination = AppDestination.EDITOR,
     val canGoBack: Boolean = false,
     val updateState: UpdateState = UpdateState.Idle,
     val showStartupUpdateDialog: Boolean = false,

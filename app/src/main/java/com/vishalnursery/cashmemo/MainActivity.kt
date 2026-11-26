@@ -141,10 +141,10 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
     }
 
     val navItems = listOf(
-        AppDestination.SCANNER to Icons.Default.DocumentScanner,
         AppDestination.EDITOR to Icons.Default.EditNote,
-        AppDestination.HISTORY to Icons.Default.History,
-        AppDestination.LEDGER to Icons.Default.People
+        AppDestination.LEDGER to Icons.Default.People,
+        AppDestination.SCANNER to Icons.Default.DocumentScanner,
+        AppDestination.HISTORY to Icons.Default.History
     )
 
     CompositionLocalProvider(LocalBottomOverlayInset provides bottomOverlayInset) {

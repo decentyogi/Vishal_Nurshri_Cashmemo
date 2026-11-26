@@ -179,7 +179,7 @@ class CashmemoViewModel(
 
     fun closeSettings() {
         if (!navigateBack()) {
-            go(AppDestination.SCANNER, replaceCurrent = true)
+            go(AppDestination.EDITOR, replaceCurrent = true)
         }
     }
 

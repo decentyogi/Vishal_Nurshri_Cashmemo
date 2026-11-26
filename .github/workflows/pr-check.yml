@@ -1,0 +1,39 @@
+name: PR Compile & Unit Test Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  pr-check:
+    name: Test & Debug APK Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle & Dependency Cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Run Unit Tests & Assemble Debug APK
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-dev
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

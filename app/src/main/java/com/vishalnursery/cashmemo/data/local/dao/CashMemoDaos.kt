@@ -9,6 +9,9 @@ import com.vishalnursery.cashmemo.data.local.entity.CashMemoEntity
 import com.vishalnursery.cashmemo.data.local.entity.CustomerEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoItemEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoWithItems
+import com.vishalnursery.cashmemo.data.local.entity.PaymentAllocationEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentWithAllocations
 import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -103,4 +106,53 @@ interface PlantRateDao {
 
     @Query("DELETE FROM plant_rates")
     suspend fun deleteAllRates()
+}
+
+@Dao
+interface PaymentDao {
+
+    @Transaction
+    @Query("SELECT * FROM payments ORDER BY createdAt DESC")
+    fun observeAllPayments(): Flow<List<PaymentWithAllocations>>
+
+    @Query("SELECT * FROM payment_allocations")
+    fun observeAllAllocations(): Flow<List<PaymentAllocationEntity>>
+
+    @Transaction
+    @Query("SELECT * FROM payments ORDER BY createdAt DESC")
+    suspend fun getAllPaymentsOnce(): List<PaymentWithAllocations>
+
+    @Query("SELECT * FROM payment_allocations")
+    suspend fun getAllAllocationsOnce(): List<PaymentAllocationEntity>
+
+    @Transaction
+    @Query("SELECT * FROM payments WHERE id = :id LIMIT 1")
+    suspend fun getPaymentById(id: String): PaymentWithAllocations?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPayment(payment: PaymentEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllocations(allocations: List<PaymentAllocationEntity>)
+
+    @Query("DELETE FROM payment_allocations WHERE paymentId = :paymentId")
+    suspend fun deleteAllocationsForPayment(paymentId: String)
+
+    @Query("DELETE FROM payment_allocations WHERE memoId = :memoId")
+    suspend fun deleteAllocationsForMemo(memoId: String)
+
+    @Transaction
+    suspend fun upsertPaymentWithAllocations(
+        payment: PaymentEntity,
+        allocations: List<PaymentAllocationEntity>
+    ) {
+        insertPayment(payment)
+        deleteAllocationsForPayment(payment.id)
+        if (allocations.isNotEmpty()) {
+            insertAllocations(allocations)
+        }
+    }
+
+    @Query("DELETE FROM payments WHERE id = :id")
+    suspend fun deletePaymentById(id: String)
 }

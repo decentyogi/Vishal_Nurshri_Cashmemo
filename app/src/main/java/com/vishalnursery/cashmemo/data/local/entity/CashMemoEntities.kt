@@ -91,3 +91,47 @@ data class PlantRateEntity(
     val wholesalePrice: Double,
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0L
 )
+
+@Entity(tableName = "payments")
+data class PaymentEntity(
+    @PrimaryKey val id: String,
+    val customerId: String,
+    val customerName: String,
+    val customerMobile: String,
+    val amount: Double,
+    val method: String,
+    val note: String,
+    val date: String,
+    val createdAt: Long
+)
+
+@Entity(
+    tableName = "payment_allocations",
+    foreignKeys = [
+        ForeignKey(
+            entity = PaymentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paymentId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["paymentId"]),
+        Index(value = ["memoId"])
+    ]
+)
+data class PaymentAllocationEntity(
+    @PrimaryKey val id: String,
+    val paymentId: String,
+    val memoId: String,
+    val amount: Double
+)
+
+data class PaymentWithAllocations(
+    @Embedded val payment: PaymentEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "paymentId"
+    )
+    val allocations: List<PaymentAllocationEntity>
+)

@@ -325,9 +325,9 @@ fun HistoryDashboardScreen(
                 items(groupedEntries, key = { it.key }) { (dateKey, dayMemos) ->
                     val defaultExpanded = selectedDate.isNotBlank() || searchQuery.isNotBlank()
                     val isExpanded = expandedDates[dateKey] ?: defaultExpanded
-                    val daySales = round2(dayMemos.sumOf { it.totalPayable })
-                    val dayCollected = round2(dayMemos.sumOf { it.paidAmount })
-                    val dayDue = round2(dayMemos.sumOf { it.balanceDue })
+                    val daySales = round2(dayMemos.sumOf { it.grandTotal })
+                    val dayCollected = round2(dayMemos.sumOf { it.effectivePaid })
+                    val dayDue = round2(dayMemos.sumOf { it.effectiveDue })
 
                     Card(
                         colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
@@ -462,15 +462,15 @@ private fun MemoHistoryCard(
                         )
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = if (memo.hasPendingDue) NurseryColors.DueRedContainer else NurseryColors.BotanicalGreenLight
+                            color = if (memo.hasEffectivePendingDue) NurseryColors.DueRedContainer else NurseryColors.BotanicalGreenLight
                         ) {
                             Text(
-                                text = if (memo.hasPendingDue) {
-                                    "Due ${IndianCurrencyFormatter.formatInr(memo.balanceDue, currencySymbol)}"
+                                text = if (memo.hasEffectivePendingDue) {
+                                    "Due ${IndianCurrencyFormatter.formatInr(memo.effectiveDue, currencySymbol)}"
                                 } else "Paid",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = if (memo.hasPendingDue) NurseryColors.DueRed else NurseryColors.BotanicalGreen,
+                                color = if (memo.hasEffectivePendingDue) NurseryColors.DueRed else NurseryColors.BotanicalGreen,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                             )
                         }

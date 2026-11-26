@@ -342,6 +342,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 AppDestination.LEDGER -> CatalogLedgerScreen(
                     customers = uiState.customers,
                     memos = uiState.allMemos,
+                    payments = uiState.payments,
                     plantRates = uiState.plantRates,
                     settings = uiState.settings,
                     rateScan = uiState.rateScan,
@@ -358,7 +359,9 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     onClearRateScanError = viewModel::clearRateScanError,
                     onOpenSettings = { viewModel.navigateTo(AppDestination.SETTINGS) },
                     onSaveCustomer = viewModel::saveCustomer,
-                    onSettleCustomerDue = viewModel::settleCustomerDue,
+                    onReceivePayment = viewModel::receiveCustomerPayment,
+                    onDeletePayment = viewModel::deleteCustomerPayment,
+                    onRecalculateCustomer = viewModel::recalculateCustomerBalance,
                     onDeleteCustomer = viewModel::deleteCustomer,
                     onCreateBillForCustomer = viewModel::createNewBillForCustomer,
                     onEditMemo = viewModel::editMemo,

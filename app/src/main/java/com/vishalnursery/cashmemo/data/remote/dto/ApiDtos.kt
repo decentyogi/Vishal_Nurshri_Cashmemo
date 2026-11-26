@@ -96,12 +96,33 @@ data class GenericSuccessDto(
     @SerializedName("message") val message: String? = null
 )
 
+data class PaymentAllocationDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("paymentId") val paymentId: String = "",
+    @SerializedName("memoId") val memoId: String = "",
+    @SerializedName("amount") val amount: Double = 0.0
+)
+
+data class PaymentDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("customerId") val customerId: String = "",
+    @SerializedName("customerName") val customerName: String = "",
+    @SerializedName("customerMobile") val customerMobile: String = "",
+    @SerializedName("amount") val amount: Double = 0.0,
+    @SerializedName("method") val method: String = "Cash",
+    @SerializedName("note") val note: String = "",
+    @SerializedName("date") val date: String = "",
+    @SerializedName("createdAt") val createdAt: Long = 0L,
+    @SerializedName("allocations") val allocations: List<PaymentAllocationDto>? = null
+)
+
 data class BackupPayloadDto(
-    @SerializedName("version") val version: Int = 6,
+    @SerializedName("version") val version: Int = 7,
     @SerializedName("appName") val appName: String = "Vishal_Nurshri_Cashmemo_Android",
     @SerializedName("exportDate") val exportDate: String = "",
     @SerializedName("settings") val settings: SettingsDto? = null,
-    @SerializedName("bills") val bills: List<BillDto> = emptyList(),
-    @SerializedName("customers") val customers: List<CustomerDto> = emptyList(),
-    @SerializedName("rates") val rates: List<PlantRateDto> = emptyList()
+    @SerializedName("bills") val bills: List<BillDto>? = emptyList(),
+    @SerializedName("customers") val customers: List<CustomerDto>? = emptyList(),
+    @SerializedName("rates") val rates: List<PlantRateDto>? = emptyList(),
+    @SerializedName("payments") val payments: List<PaymentDto>? = emptyList()
 )

@@ -17,6 +17,7 @@ import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DashboardStats
 import com.vishalnursery.cashmemo.domain.model.DiscountType
@@ -73,22 +74,23 @@ class CashmemoViewModel(
         viewModelScope.launch {
             combine(
                 repository.memosFlow,
+                repository.paymentsFlow,
                 repository.customersFlow,
                 repository.plantRatesFlow,
-                repository.settingsFlow,
                 repository.settingsFlow.combine(searchQueryFlow) { s, q -> s to q }
-            ) { memos, customers, rates, settings, _ ->
-                val query = searchQueryFlow.value
+            ) { memos, payments, customers, rates, settingsPair ->
+                val settings = settingsPair.first
+                val query = settingsPair.second
                 val selectedDate = selectedHistoryDateFlow.value
                 val filter = historyFilterFlow.value
                 val filtered = filterMemos(memos, query, selectedDate, filter)
                 val stats = DashboardStats(
                     totalMemos = memos.size,
-                    totalSales = round2(memos.sumOf { it.totalPayable }),
-                    totalCollected = round2(memos.sumOf { it.paidAmount }),
-                    totalPendingDues = round2(memos.sumOf { it.balanceDue })
+                    totalSales = round2(memos.sumOf { it.grandTotal }),
+                    totalCollected = round2(memos.sumOf { it.paidAmount } + payments.sumOf { it.amount }),
+                    totalPendingDues = round2(memos.sumOf { it.effectiveDue })
                 )
-                QuadrupleResult(memos, filtered, customers, rates, settings, query, selectedDate, filter, stats)
+                QuadrupleResult(memos, payments, filtered, customers, rates, settings, query, selectedDate, filter, stats)
             }.collect { data ->
                 _uiState.update { current ->
                     val updatedEditor = if (!initializedEditorNumber && current.editor.editingMemoId == null) {
@@ -104,6 +106,7 @@ class CashmemoViewModel(
                     }
                     current.copy(
                         allMemos = data.memos,
+                        payments = data.payments,
                         filteredMemos = data.filtered,
                         customers = data.customers,
                         plantRates = data.rates,
@@ -1054,43 +1057,50 @@ class CashmemoViewModel(
         }
     }
 
+    private fun CashMemo.withEffectiveAmounts(): CashMemo = copy(
+        paidAmount = effectivePaid,
+        balanceDue = effectiveDue,
+        paymentStatusNote = if (hasEffectivePendingDue) paymentStatusNote else "Fully Paid"
+    )
+
     fun printMemo(memo: CashMemo) {
         viewModelScope.launch {
-            _events.emit(UiEvent.TriggerPrint(memo, _uiState.value.settings))
+            _events.emit(UiEvent.TriggerPrint(memo.withEffectiveAmounts(), _uiState.value.settings))
         }
     }
 
     fun shareMemoAsJpeg(memo: CashMemo) {
         viewModelScope.launch {
-            _events.emit(UiEvent.ShareMemoImages(memo, _uiState.value.settings))
+            _events.emit(UiEvent.ShareMemoImages(memo.withEffectiveAmounts(), _uiState.value.settings))
         }
     }
 
     fun shareMemoAsPdf(memo: CashMemo) {
         viewModelScope.launch {
-            _events.emit(UiEvent.ShareMemoPdf(memo, _uiState.value.settings))
+            _events.emit(UiEvent.ShareMemoPdf(memo.withEffectiveAmounts(), _uiState.value.settings))
         }
     }
 
     fun shareMemoSummary(memo: CashMemo) {
+        val effective = memo.withEffectiveAmounts()
         val settings = _uiState.value.settings
         val summary = buildString {
             appendLine("${settings.shopNameHindi} (${settings.shopNameEnglish})")
-            appendLine("Memo #${memo.memoNumber} | Date: ${memo.date}")
-            if (memo.customerName.isNotBlank()) appendLine("Customer: ${memo.customerName}")
+            appendLine("Memo #${effective.memoNumber} | Date: ${effective.date}")
+            if (effective.customerName.isNotBlank()) appendLine("Customer: ${effective.customerName}")
             appendLine("--------------------------------")
-            for (item in memo.items) {
+            for (item in effective.items) {
                 appendLine("${item.description} x ${item.quantity} = ${IndianCurrencyFormatter.formatInr(item.amount, settings.currencySymbol)}")
             }
             appendLine("--------------------------------")
-            appendLine("Total: ${IndianCurrencyFormatter.formatInr(memo.totalPayable, settings.currencySymbol)}")
-            appendLine("Paid: ${IndianCurrencyFormatter.formatInr(memo.paidAmount, settings.currencySymbol)}")
-            appendLine("Balance: ${IndianCurrencyFormatter.formatInr(memo.balanceDue, settings.currencySymbol)}")
+            appendLine("Total: ${IndianCurrencyFormatter.formatInr(effective.totalPayable, settings.currencySymbol)}")
+            appendLine("Paid: ${IndianCurrencyFormatter.formatInr(effective.paidAmount, settings.currencySymbol)}")
+            appendLine("Balance: ${IndianCurrencyFormatter.formatInr(effective.balanceDue, settings.currencySymbol)}")
         }
         viewModelScope.launch {
             _events.emit(
                 UiEvent.ShareFile(
-                    fileName = "Cashmemo_${memo.memoNumber}.txt",
+                    fileName = "Cashmemo_${effective.memoNumber}.txt",
                     mimeType = "text/plain",
                     content = summary
                 )
@@ -1179,16 +1189,59 @@ class CashmemoViewModel(
         }
     }
 
-    fun settleCustomerDue(customerId: String, amount: Double, promiseNote: String) {
+    fun receiveCustomerPayment(
+        customerId: String,
+        amount: Double,
+        method: String,
+        date: String,
+        note: String,
+        selectedMemoIds: Set<String>?
+    ) {
         viewModelScope.launch {
-            runCatching { repository.recordCustomerPayment(customerId, amount, promiseNote) }
-                .onSuccess { _events.emit(UiEvent.ShowMessage("Payment recorded")) }
-                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Payment failed: ${err.localizedMessage}")) }
+            repository.recordCustomerPayment(
+                customerId = customerId,
+                amountPaid = amount,
+                promiseNote = note,
+                method = method,
+                date = date,
+                selectedMemoIds = selectedMemoIds
+            ).onSuccess {
+                _events.emit(UiEvent.ShowMessage("Payment recorded"))
+            }.onFailure { err ->
+                _events.emit(UiEvent.ShowMessage("Payment failed: ${err.localizedMessage}"))
+            }
         }
+    }
+
+    fun settleCustomerDue(customerId: String, amount: Double, promiseNote: String) {
+        receiveCustomerPayment(
+            customerId = customerId,
+            amount = amount,
+            method = "Cash",
+            date = CashMemo.todayFormatted(),
+            note = promiseNote,
+            selectedMemoIds = null
+        )
     }
 
     fun settleCustomerDue(customer: CustomerProfile, amount: Double, promiseNote: String) {
         settleCustomerDue(customer.id, amount, promiseNote)
+    }
+
+    fun deleteCustomerPayment(paymentId: String) {
+        viewModelScope.launch {
+            repository.deletePayment(paymentId)
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Payment deleted and balance updated")) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Delete failed: ${err.localizedMessage}")) }
+        }
+    }
+
+    fun recalculateCustomerBalance(customerId: String) {
+        viewModelScope.launch {
+            repository.recalculateCustomerFromBills(customerId)
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Customer balance recalculated from bills")) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Recalculation failed: ${err.localizedMessage}")) }
+        }
     }
 
     fun deleteCustomer(id: String) {
@@ -1579,8 +1632,8 @@ class CashmemoViewModel(
         return memos.filter { memo ->
             val matchesFilter = when (filter) {
                 MemoFilter.ALL -> true
-                MemoFilter.PENDING_DUE -> memo.hasPendingDue
-                MemoFilter.PAID -> !memo.hasPendingDue
+                MemoFilter.PENDING_DUE -> memo.hasEffectivePendingDue
+                MemoFilter.PAID -> !memo.hasEffectivePendingDue
             }
             if (!matchesFilter) return@filter false
             if (d.isNotEmpty() && memo.date.trim() != d) return@filter false
@@ -1630,6 +1683,7 @@ class CashmemoViewModel(
 
     private data class QuadrupleResult(
         val memos: List<CashMemo>,
+        val payments: List<CustomerPayment>,
         val filtered: List<CashMemo>,
         val customers: List<CustomerProfile>,
         val rates: List<PlantRate>,

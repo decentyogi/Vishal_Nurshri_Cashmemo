@@ -3,6 +3,7 @@ package com.vishalnursery.cashmemo.ui.viewmodel
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DashboardStats
 import com.vishalnursery.cashmemo.domain.model.DiscountType
@@ -134,6 +135,7 @@ data class CashmemoUiState(
     val historyFilter: MemoFilter = MemoFilter.ALL,
     val dashboardStats: DashboardStats = DashboardStats(),
     val customers: List<CustomerProfile> = emptyList(),
+    val payments: List<CustomerPayment> = emptyList(),
     val plantRates: List<PlantRate> = emptyList(),
     val isSyncing: Boolean = false,
     val syncProgressText: String? = null,

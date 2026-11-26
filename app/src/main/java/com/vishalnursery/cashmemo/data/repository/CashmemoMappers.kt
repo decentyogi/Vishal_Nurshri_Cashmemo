@@ -4,20 +4,27 @@ import com.vishalnursery.cashmemo.data.local.entity.CashMemoEntity
 import com.vishalnursery.cashmemo.data.local.entity.CustomerEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoItemEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoWithItems
+import com.vishalnursery.cashmemo.data.local.entity.PaymentAllocationEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentWithAllocations
 import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
 import com.vishalnursery.cashmemo.data.remote.dto.BillDto
 import com.vishalnursery.cashmemo.data.remote.dto.CustomerDto
 import com.vishalnursery.cashmemo.data.remote.dto.MemoItemDto
+import com.vishalnursery.cashmemo.data.remote.dto.PaymentAllocationDto
+import com.vishalnursery.cashmemo.data.remote.dto.PaymentDto
 import com.vishalnursery.cashmemo.data.remote.dto.PlantRateDto
 import com.vishalnursery.cashmemo.data.remote.dto.SettingsDto
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoItem
+import com.vishalnursery.cashmemo.domain.model.PaymentAllocation
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 
-fun MemoWithItems.toDomain(): CashMemo = CashMemo(
+fun MemoWithItems.toDomain(laterPaid: Double = 0.0): CashMemo = CashMemo(
     id = memo.id,
     memoNumber = memo.memoNumber,
     date = memo.date,
@@ -43,6 +50,7 @@ fun MemoWithItems.toDomain(): CashMemo = CashMemo(
     sourceImageUri = memo.sourceImageUri,
     isWholesale = memo.isWholesale,
     isSynced = memo.isSynced,
+    laterPaid = laterPaid,
     createdAt = memo.createdAt,
     updatedAt = memo.updatedAt
 )
@@ -296,3 +304,87 @@ fun SettingsDto.mergeInto(current: BusinessSettings): BusinessSettings = current
     signerName = signerName.ifBlank { current.signerName },
     termsNote = termsNote.ifBlank { current.termsNote }
 )
+
+fun PaymentAllocationEntity.toDomain(): PaymentAllocation = PaymentAllocation(
+    id = id,
+    paymentId = paymentId,
+    memoId = memoId,
+    amount = amount
+)
+
+fun PaymentWithAllocations.toDomain(): CustomerPayment = CustomerPayment(
+    id = payment.id,
+    customerId = payment.customerId,
+    customerName = payment.customerName,
+    customerMobile = payment.customerMobile,
+    amount = payment.amount,
+    method = payment.method,
+    note = payment.note,
+    date = payment.date,
+    createdAt = payment.createdAt,
+    allocations = allocations.map { it.toDomain() }
+)
+
+fun CustomerPayment.toEntity(): PaymentEntity = PaymentEntity(
+    id = id,
+    customerId = customerId,
+    customerName = customerName,
+    customerMobile = customerMobile,
+    amount = amount,
+    method = method,
+    note = note,
+    date = date,
+    createdAt = createdAt
+)
+
+fun CustomerPayment.toAllocationEntities(): List<PaymentAllocationEntity> = allocations.map {
+    PaymentAllocationEntity(
+        id = it.id,
+        paymentId = id,
+        memoId = it.memoId,
+        amount = it.amount
+    )
+}
+
+fun CustomerPayment.toDto(): PaymentDto = PaymentDto(
+    id = id,
+    customerId = customerId,
+    customerName = customerName,
+    customerMobile = customerMobile,
+    amount = amount,
+    method = method,
+    note = note,
+    date = date,
+    createdAt = createdAt,
+    allocations = allocations.map {
+        PaymentAllocationDto(
+            id = it.id,
+            paymentId = id,
+            memoId = it.memoId,
+            amount = it.amount
+        )
+    }
+)
+
+fun PaymentDto.toDomain(): CustomerPayment {
+    val payId = id.ifBlank { "pay_${System.currentTimeMillis()}" }
+    return CustomerPayment(
+        id = payId,
+        customerId = customerId,
+        customerName = customerName,
+        customerMobile = customerMobile,
+        amount = amount,
+        method = method.ifBlank { "Cash" },
+        note = note,
+        date = date.ifBlank { CashMemo.todayFormatted() },
+        createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
+        allocations = allocations.orEmpty().map { a ->
+            PaymentAllocation(
+                id = a.id.ifBlank { "alloc_${System.nanoTime()}" },
+                paymentId = payId,
+                memoId = a.memoId,
+                amount = a.amount
+            )
+        }
+    )
+}

@@ -36,6 +36,7 @@ data class CashMemo(
     val sourceImageUri: String = "",
     val isWholesale: Boolean = false,
     val isSynced: Boolean = false,
+    val laterPaid: Double = 0.0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
@@ -44,6 +45,15 @@ data class CashMemo(
 
     val hasPendingDue: Boolean
         get() = balanceDue > 0.009
+
+    val effectivePaid: Double
+        get() = round2(paidAmount + laterPaid)
+
+    val effectiveDue: Double
+        get() = round2(max(0.0, balanceDue - laterPaid))
+
+    val hasEffectivePendingDue: Boolean
+        get() = effectiveDue > 0.009
 
     companion object {
         fun newMemoId(): String =
@@ -86,6 +96,26 @@ data class CustomerProfile(
     val lastPromiseNote: String = "Carry Forward",
     val lastTransactionAt: Long = System.currentTimeMillis(),
     val createdAt: Long = System.currentTimeMillis()
+)
+
+data class PaymentAllocation(
+    val id: String = "alloc_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}",
+    val paymentId: String = "",
+    val memoId: String,
+    val amount: Double
+)
+
+data class CustomerPayment(
+    val id: String = "pay_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}",
+    val customerId: String = "",
+    val customerName: String = "",
+    val customerMobile: String = "",
+    val amount: Double,
+    val method: String = "Cash",
+    val note: String = "",
+    val date: String = CashMemo.todayFormatted(),
+    val createdAt: Long = System.currentTimeMillis(),
+    val allocations: List<PaymentAllocation> = emptyList()
 )
 
 data class PlantRate(

@@ -645,22 +645,20 @@ class CashmemoViewModel(
                     item
                 } else {
                     val plant = rates.firstOrNull { it.id == link.plantRateId }
-                    if (plant != null) {
+                    if (plant != null && plant.hasPriceForTier(enabled)) {
                         switchedCount++
-                        val newPrice = if (enabled) {
-                            if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
-                        } else plant.retailPrice
-                        item.copy(rate = newPrice)
+                        item.copy(rate = plant.priceForTier(enabled))
                     } else item
                 }
             } else {
                 val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-                if (plant != null && (item.rate == plant.retailPrice || (plant.wholesalePrice > 0.0 && item.rate == plant.wholesalePrice))) {
+                if (plant != null &&
+                    plant.hasPriceForTier(enabled) &&
+                    ((plant.retailPrice > 0.0 && item.rate == plant.retailPrice) ||
+                        (plant.wholesalePrice > 0.0 && item.rate == plant.wholesalePrice))
+                ) {
                     switchedCount++
-                    val newPrice = if (enabled) {
-                        if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
-                    } else plant.retailPrice
-                    item.copy(rate = newPrice)
+                    item.copy(rate = plant.priceForTier(enabled))
                 } else {
                     item
                 }
@@ -810,8 +808,12 @@ class CashmemoViewModel(
             val rates = _uiState.value.plantRates
             val plant = if (link != null) rates.firstOrNull { it.id == link.plantRateId }
                         else rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-            val tierPrice = if (plant != null) (if (state.isWholesaleMode) plant.wholesalePrice else plant.retailPrice) else null
-            val isCustom = tierPrice != null && rate != tierPrice
+            val hasTierPrice = plant?.hasPriceForTier(state.isWholesaleMode) == true
+            val isCustom = if (plant != null && hasTierPrice) {
+                kotlin.math.abs(rate - plant.priceForTier(state.isWholesaleMode)) > 0.01
+            } else {
+                false
+            }
 
             val updatedItem = item.copy(rate = rate)
             val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
@@ -830,10 +832,8 @@ class CashmemoViewModel(
             val rates = _uiState.value.plantRates
             val plant = if (link != null) rates.firstOrNull { it.id == link.plantRateId }
                         else rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-            if (plant != null) {
-                val tierPrice = if (state.isWholesaleMode) {
-                    if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
-                } else plant.retailPrice
+            if (plant != null && plant.hasPriceForTier(state.isWholesaleMode)) {
+                val tierPrice = plant.priceForTier(state.isWholesaleMode)
                 val updatedItem = item.copy(rate = tierPrice)
                 val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
                 val updatedLinks = state.rateLinks + (item.id to RateLink(plantRateId = plant.id, customRate = false))
@@ -843,9 +843,7 @@ class CashmemoViewModel(
     }
 
     fun applyPlantRateSuggestion(index: Int, rateItem: PlantRate) {
-        val price = if (_uiState.value.editor.isWholesaleMode) {
-            if (rateItem.wholesalePrice > 0.0) rateItem.wholesalePrice else rateItem.retailPrice
-        } else rateItem.retailPrice
+        val price = rateItem.priceForTier(_uiState.value.editor.isWholesaleMode)
         updateEditor { state ->
             val item = state.items.getOrNull(index) ?: return@updateEditor state
             val updatedItem = item.copy(description = rateItem.name, rate = price)
@@ -1200,7 +1198,12 @@ class CashmemoViewModel(
     fun savePlantRate(rate: PlantRate) {
         viewModelScope.launch {
             repository.savePlantRate(rate)
-            _events.emit(UiEvent.ShowMessage("Saved plant rate: ${rate.name}"))
+            val tierSuffix = when {
+                rate.wholesalePrice > 0.0 && rate.retailPrice == 0.0 -> " (Wholesale)"
+                rate.retailPrice > 0.0 && rate.wholesalePrice == 0.0 -> " (Retail)"
+                else -> ""
+            }
+            _events.emit(UiEvent.ShowMessage("Saved plant rate: ${rate.name}$tierSuffix"))
         }
     }
 

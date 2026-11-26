@@ -999,17 +999,19 @@ fun ReviewEditorScreen(
                                                                         )
                                                                     }
                                                                 }
-                                                                Surface(
-                                                                    shape = RoundedCornerShape(4.dp),
-                                                                    color = if (!isWholesale) NurseryColors.BotanicalGreenLight else NurseryColors.CreamBackground
-                                                                ) {
-                                                                    Text(
-                                                                        text = "R: ${IndianCurrencyFormatter.formatInr(matched.retailPrice, settings.currencySymbol)}",
-                                                                        style = MaterialTheme.typography.labelSmall,
-                                                                        fontWeight = if (!isWholesale) FontWeight.Bold else FontWeight.Normal,
-                                                                        color = if (!isWholesale) NurseryColors.BotanicalGreen else NurseryColors.InkMedium,
-                                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                                                    )
+                                                                if (matched.retailPrice > 0.0) {
+                                                                    Surface(
+                                                                        shape = RoundedCornerShape(4.dp),
+                                                                        color = if (!isWholesale) NurseryColors.BotanicalGreenLight else NurseryColors.CreamBackground
+                                                                    ) {
+                                                                        Text(
+                                                                            text = "R: ${IndianCurrencyFormatter.formatInr(matched.retailPrice, settings.currencySymbol)}",
+                                                                            style = MaterialTheme.typography.labelSmall,
+                                                                            fontWeight = if (!isWholesale) FontWeight.Bold else FontWeight.Normal,
+                                                                            color = if (!isWholesale) NurseryColors.BotanicalGreen else NurseryColors.InkMedium,
+                                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                                        )
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -1040,7 +1042,7 @@ fun ReviewEditorScreen(
                                                                 onSavePlantRate(
                                                                     PlantRate(
                                                                         name = item.description.trim(),
-                                                                        retailPrice = item.rate,
+                                                                        retailPrice = if (editorState.isWholesaleMode) 0.0 else item.rate,
                                                                         wholesalePrice = if (editorState.isWholesaleMode) item.rate else 0.0,
                                                                         category = ""
                                                                     )
@@ -1125,11 +1127,9 @@ fun ReviewEditorScreen(
 
                                     if (linkedPlant != null) {
                                         val tierLabel = if (editorState.isWholesaleMode) "wholesale" else "retail"
-                                        val savedTierPrice = if (editorState.isWholesaleMode) {
-                                            if (linkedPlant.wholesalePrice > 0.0) linkedPlant.wholesalePrice else linkedPlant.retailPrice
-                                        } else linkedPlant.retailPrice
-
-                                        val isCustom = Math.abs(item.rate - savedTierPrice) > 0.01
+                                        val hasTierPrice = linkedPlant.hasPriceForTier(editorState.isWholesaleMode)
+                                        val savedTierPrice = if (hasTierPrice) linkedPlant.priceForTier(editorState.isWholesaleMode) else 0.0
+                                        val isCustom = hasTierPrice && Math.abs(item.rate - savedTierPrice) > 0.01
 
                                         Row(
                                             modifier = Modifier
@@ -1137,7 +1137,13 @@ fun ReviewEditorScreen(
                                                 .padding(top = 2.dp, start = 4.dp),
                                             horizontalArrangement = Arrangement.End
                                         ) {
-                                            if (!isCustom) {
+                                            if (!hasTierPrice) {
+                                                Text(
+                                                    text = "No $tierLabel rate saved yet",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = NurseryColors.MutedInk
+                                                )
+                                            } else if (!isCustom) {
                                                 Text(
                                                     text = "Saved $tierLabel ${IndianCurrencyFormatter.formatInr(savedTierPrice, settings.currencySymbol)}",
                                                     style = MaterialTheme.typography.labelSmall,

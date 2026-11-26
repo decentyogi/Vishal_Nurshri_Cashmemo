@@ -95,7 +95,16 @@ data class PlantRate(
     val retailPrice: Double = 0.0,
     val wholesalePrice: Double = 0.0,
     val updatedAt: Long = System.currentTimeMillis()
-)
+) {
+    fun hasPriceForTier(isWholesale: Boolean): Boolean =
+        if (isWholesale) wholesalePrice > 0.0 else retailPrice > 0.0
+
+    fun priceForTier(isWholesale: Boolean): Double = if (isWholesale) {
+        if (wholesalePrice > 0.0) wholesalePrice else retailPrice
+    } else {
+        if (retailPrice > 0.0) retailPrice else wholesalePrice
+    }
+}
 
 data class BusinessSettings(
     val shopNameHindi: String = "विशाल नर्सरी",

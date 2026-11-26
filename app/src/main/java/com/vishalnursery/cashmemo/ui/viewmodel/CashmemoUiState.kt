@@ -10,6 +10,8 @@ import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoCalculationResult
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 
@@ -28,8 +30,13 @@ data class RateLink(
 
 data class EditorUiState(
     val editingMemoId: String? = null,
+    val memoType: MemoType = MemoType.CASH,
+    val orderStatus: OrderStatus = OrderStatus.PENDING,
+    val linkedMemoId: String = "",
+    val deliveringOrderId: String? = null,
     val memoNumber: String = "1001",
     val date: String = CashMemo.todayFormatted(),
+    val dueDate: String = "",
     val customerName: String = "",
     val customerMobile: String = "",
     val customerAddress: String = "",
@@ -50,15 +57,18 @@ data class EditorUiState(
     val sourceImageUri: String = "",
     val createdAt: Long = System.currentTimeMillis()
 ) {
+    val isOrder: Boolean
+        get() = memoType == MemoType.ORDER
+
     val calculation: MemoCalculationResult
         get() = MemoCalculationResult.compute(
             items = items,
             discount = discountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
             discountType = discountType,
             taxPercentage = taxPercentageText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
-            previousDues = previousDuesText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
+            previousDues = if (isOrder) 0.0 else (previousDuesText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0),
             paidAmount = paidAmountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
-            hasCustomPayment = hasCustomPayment
+            hasCustomPayment = hasCustomPayment || isOrder
         )
 }
 
@@ -130,6 +140,8 @@ data class CashmemoUiState(
     val editor: EditorUiState = EditorUiState(),
     val allMemos: List<CashMemo> = emptyList(),
     val filteredMemos: List<CashMemo> = emptyList(),
+    val allOrders: List<CashMemo> = emptyList(),
+    val historyTab: Int = 0,
     val searchQuery: String = "",
     val selectedHistoryDate: String = "",
     val historyFilter: MemoFilter = MemoFilter.ALL,

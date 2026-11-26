@@ -105,10 +105,11 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                         val files = withContext(Dispatchers.Default) {
                             BillDocumentRenderer.renderJpegFiles(context, event.memo, event.settings)
                         }
+                        val prefix = if (event.memo.isOrder) "OrderMemo" else "CashMemo"
                         ShareExportHelper.shareImageFiles(
                             context = context,
                             files = files,
-                            subject = "CashMemo_${event.memo.memoNumber}"
+                            subject = "${prefix}_${event.memo.memoNumber}"
                         )
                     }.onFailure { err ->
                         snackbarHostState.currentSnackbarData?.dismiss()
@@ -120,10 +121,11 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                         val file = withContext(Dispatchers.Default) {
                             BillDocumentRenderer.renderPdfFile(context, event.memo, event.settings)
                         }
+                        val prefix = if (event.memo.isOrder) "OrderMemo" else "CashMemo"
                         ShareExportHelper.sharePdfFile(
                             context = context,
                             file = file,
-                            subject = "CashMemo_${event.memo.memoNumber}.pdf"
+                            subject = "${prefix}_${event.memo.memoNumber}.pdf"
                         )
                     }.onFailure { err ->
                         snackbarHostState.currentSnackbarData?.dismiss()
@@ -284,6 +286,9 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     plantRates = uiState.plantRates,
                     onUpdateMemoNumber = viewModel::updateMemoNumber,
                     onUpdateDate = viewModel::updateDate,
+                    onToggleMemoType = viewModel::toggleMemoType,
+                    onUpdateDueDate = viewModel::updateDueDate,
+                    onUpdateOrderStatus = viewModel::updateOrderStatusInEditor,
                     onUpdateCustomerName = viewModel::updateCustomerName,
                     onUpdateCustomerMobile = viewModel::updateCustomerMobile,
                     onUpdateCustomerAddress = viewModel::updateCustomerAddress,

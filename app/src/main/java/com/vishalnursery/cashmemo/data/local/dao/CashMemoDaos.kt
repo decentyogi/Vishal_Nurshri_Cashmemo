@@ -19,12 +19,28 @@ import kotlinx.coroutines.flow.Flow
 interface MemoDao {
 
     @Transaction
-    @Query("SELECT * FROM cash_memos ORDER BY createdAt DESC")
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'CASH' ORDER BY createdAt DESC")
     fun observeAllMemos(): Flow<List<MemoWithItems>>
 
     @Transaction
-    @Query("SELECT * FROM cash_memos ORDER BY createdAt DESC")
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'CASH' ORDER BY createdAt DESC")
     suspend fun getAllMemosOnce(): List<MemoWithItems>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'ORDER' ORDER BY createdAt DESC")
+    fun observeOrders(): Flow<List<MemoWithItems>>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'ORDER' ORDER BY createdAt DESC")
+    suspend fun getOrdersOnce(): List<MemoWithItems>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos ORDER BY createdAt DESC")
+    suspend fun getEverythingOnce(): List<MemoWithItems>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'ORDER' AND linkedMemoId = :memoId")
+    suspend fun getOrdersByLinkedMemoId(memoId: String): List<MemoWithItems>
 
     @Transaction
     @Query("SELECT * FROM cash_memos WHERE id = :id LIMIT 1")

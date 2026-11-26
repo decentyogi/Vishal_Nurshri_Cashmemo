@@ -7,6 +7,27 @@ import java.util.UUID
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+enum class MemoType(val wireValue: String, val label: String) {
+    CASH("CASH", "Cash Memo"),
+    ORDER("ORDER", "Order Memo");
+
+    companion object {
+        fun fromWire(value: String?): MemoType =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) } ?: CASH
+    }
+}
+
+enum class OrderStatus(val wireValue: String, val label: String) {
+    PENDING("PENDING", "Pending"),
+    DELIVERED("DELIVERED", "Delivered"),
+    CANCELLED("CANCELLED", "Cancelled");
+
+    companion object {
+        fun fromWire(value: String?): OrderStatus =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) } ?: PENDING
+    }
+}
+
 /**
  * Core domain entity representing a cash memo / invoice, compatible with Cashmemo_AI_Web.
  */
@@ -36,10 +57,16 @@ data class CashMemo(
     val sourceImageUri: String = "",
     val isWholesale: Boolean = false,
     val isSynced: Boolean = false,
+    val memoType: MemoType = MemoType.CASH,
+    val orderStatus: OrderStatus = OrderStatus.PENDING,
+    val linkedMemoId: String = "",
     val laterPaid: Double = 0.0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
+    val isOrder: Boolean
+        get() = memoType == MemoType.ORDER
+
     val totalPayable: Double
         get() = round2(grandTotal + previousDues)
 
@@ -148,6 +175,7 @@ data class BusinessSettings(
     val currencySymbol: String = "₹",
     val memoPrefix: String = "VN-",
     val nextMemoNumber: Int = 1001,
+    val nextOrderNumber: Int = 101,
     val defaultTaxPercentage: Double = 0.0,
     val enableTax: Boolean = false,
     val taxType: String = "GST",
@@ -174,6 +202,7 @@ fun BusinessSettings.normalized(): BusinessSettings {
         gstin = cleanGstin,
         currencySymbol = currencySymbol.ifBlank { "₹" },
         nextMemoNumber = nextMemoNumber.coerceAtLeast(1),
+        nextOrderNumber = nextOrderNumber.coerceAtLeast(1),
         upiVpa = upiVpa.trim(),
         upiDefaultNote = upiDefaultNote.trim(),
         termsNote = termsNote.ifBlank { defaults.termsNote },

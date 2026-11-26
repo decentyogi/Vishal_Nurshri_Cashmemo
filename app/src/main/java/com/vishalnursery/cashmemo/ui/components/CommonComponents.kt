@@ -799,7 +799,8 @@ object CashmemoPrintHelper {
 
     fun printCashMemo(context: Context, memo: CashMemo, businessSettings: BusinessSettings) {
         val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
-        val jobName = "CashMemo_${memo.memoNumber}"
+        val jobPrefix = if (memo.isOrder) "OrderMemo" else "CashMemo"
+        val jobName = "${jobPrefix}_${memo.memoNumber}"
 
         val adapter = object : PrintDocumentAdapter() {
             private var activeAttributes: PrintAttributes = PrintAttributes.Builder()

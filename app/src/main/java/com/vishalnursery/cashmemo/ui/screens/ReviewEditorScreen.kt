@@ -40,7 +40,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
@@ -58,6 +60,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -71,6 +75,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -112,6 +117,8 @@ import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DiscountType
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
@@ -123,6 +130,10 @@ import com.vishalnursery.cashmemo.ui.viewmodel.EditorUiState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -133,6 +144,9 @@ fun ReviewEditorScreen(
     plantRates: List<PlantRate>,
     onUpdateMemoNumber: (String) -> Unit,
     onUpdateDate: (String) -> Unit,
+    onToggleMemoType: (MemoType) -> Unit = {},
+    onUpdateDueDate: (String) -> Unit = {},
+    onUpdateOrderStatus: (OrderStatus) -> Unit = {},
     onUpdateCustomerName: (String) -> Unit,
     onUpdateCustomerMobile: (String) -> Unit,
     onUpdateCustomerAddress: (String) -> Unit,
@@ -182,7 +196,41 @@ fun ReviewEditorScreen(
     var showRawOcr by remember { mutableStateOf(false) }
     var showQrDialog by remember { mutableStateOf(false) }
     var showShareSheet by remember { mutableStateOf(false) }
+    var showDeliveryDatePicker by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    if (showDeliveryDatePicker) {
+        val initialMillis = runCatching {
+            if (editorState.dueDate.isNotBlank()) {
+                SimpleDateFormat("dd/MM/yyyy", Locale.US).apply {
+                    isLenient = false
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.parse(editorState.dueDate.trim())?.time
+            } else null
+        }.getOrNull() ?: System.currentTimeMillis()
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDeliveryDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            val formatted = SimpleDateFormat("dd/MM/yyyy", Locale.US).apply {
+                                timeZone = TimeZone.getTimeZone("UTC")
+                            }.format(Date(millis))
+                            onUpdateDueDate(formatted)
+                        }
+                        showDeliveryDatePicker = false
+                    }
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeliveryDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 
     // Active expanded row tracker by ID (survives drag reordering)
     var expandedItemId by remember { mutableStateOf<String?>(editorState.items.firstOrNull()?.id) }
@@ -256,7 +304,7 @@ fun ReviewEditorScreen(
         UpiQrDialog(
             initialAmount = qrAmount,
             settings = settings,
-            billLabel = "Memo #${editorState.memoNumber}",
+            billLabel = "${if (editorState.isOrder) "Order" else "Memo"} #${editorState.memoNumber}",
             initialTab = 0,
             onSavePermanentQr = onSavePermanentQr,
             onDismiss = { showQrDialog = false }
@@ -282,7 +330,7 @@ fun ReviewEditorScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Share & Print Memo #${editorState.memoNumber}",
+                        text = "Share & Print ${if (editorState.isOrder) "Order" else "Memo"} #${editorState.memoNumber}",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = NurseryColors.Maroon
@@ -434,7 +482,8 @@ fun ReviewEditorScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        // --- 1. PINNED TOP HEADER (<= 56dp, one compact row) ---
+        // --- 1. PINNED TOP HEADER (<= 56dp, doc type left + price tier right, 360dp-safe) ---
+        val canSwitchDocType = editorState.editingMemoId == null && editorState.deliveringOrderId.isNullOrBlank()
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -445,39 +494,72 @@ fun ReviewEditorScreen(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (editorState.editingMemoId == null) "NEW CASH MEMO - #${editorState.memoNumber}" else "EDIT CASH MEMO - #${editorState.memoNumber}",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = NurseryColors.Maroon,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (rememberedTier != null && rememberedTier != editorState.isWholesaleMode) {
-                        val tierLabel = if (rememberedTier) "Wholesale" else "Retail"
-                        Text(
-                            text = "Last bill: $tierLabel - switch",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = NurseryColors.BotanicalGreen,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { onToggleWholesale(rememberedTier) }
-                        )
+                // Left: Cash Memo | Order Memo
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = NurseryColors.CreamBackground,
+                    border = BorderStroke(1.dp, NurseryColors.Maroon.copy(alpha = if (canSwitchDocType) 1f else 0.45f)),
+                    modifier = Modifier.height(36.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val cashBg by animateColorAsState(if (!editorState.isOrder) NurseryColors.Maroon else Color.Transparent, label = "cashBg")
+                        val cashText by animateColorAsState(if (!editorState.isOrder) Color.White else NurseryColors.Maroon, label = "cashText")
+                        val orderBg by animateColorAsState(if (editorState.isOrder) NurseryColors.Maroon else Color.Transparent, label = "orderBg")
+                        val orderText by animateColorAsState(if (editorState.isOrder) Color.White else NurseryColors.Maroon, label = "orderText")
+
+                        Box(
+                            modifier = Modifier
+                                .height(36.dp)
+                                .background(color = cashBg, shape = RoundedCornerShape(18.dp))
+                                .clickable(enabled = canSwitchDocType) {
+                                    if (editorState.isOrder) onToggleMemoType(MemoType.CASH)
+                                }
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Cash Memo",
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                fontWeight = if (!editorState.isOrder) FontWeight.Bold else FontWeight.Medium,
+                                color = cashText
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .height(36.dp)
+                                .background(color = orderBg, shape = RoundedCornerShape(18.dp))
+                                .clickable(enabled = canSwitchDocType) {
+                                    if (!editorState.isOrder) onToggleMemoType(MemoType.ORDER)
+                                }
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Order Memo",
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                fontWeight = if (editorState.isOrder) FontWeight.Bold else FontWeight.Medium,
+                                color = orderText
+                            )
+                        }
                     }
                 }
 
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(4.dp))
 
-                // Equal-Width Retail | Wholesale Segmented Control (Padded, Unclipped, Animated)
+                // Right: Retail | Wholesale Segmented Control (compact 360dp-safe)
                 Surface(
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(18.dp),
                     color = NurseryColors.CreamBackground,
-                    border = BorderStroke(1.2.dp, NurseryColors.Maroon),
-                    modifier = Modifier.height(38.dp)
+                    border = BorderStroke(1.dp, NurseryColors.Maroon),
+                    modifier = Modifier.height(36.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val retailBg by animateColorAsState(if (!editorState.isWholesaleMode) NurseryColors.Maroon else Color.Transparent, label = "retailBg")
@@ -487,38 +569,61 @@ fun ReviewEditorScreen(
 
                         Box(
                             modifier = Modifier
-                                .defaultMinSize(minWidth = 88.dp)
-                                .height(38.dp)
-                                .background(color = retailBg, shape = RoundedCornerShape(20.dp))
+                                .height(36.dp)
+                                .background(color = retailBg, shape = RoundedCornerShape(18.dp))
                                 .clickable { if (editorState.isWholesaleMode) onToggleWholesale(false) }
-                                .padding(horizontal = 12.dp),
+                                .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "Retail",
-                                fontSize = 13.sp,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false,
                                 fontWeight = if (!editorState.isWholesaleMode) FontWeight.Bold else FontWeight.Medium,
                                 color = retailText
                             )
                         }
                         Box(
                             modifier = Modifier
-                                .defaultMinSize(minWidth = 88.dp)
-                                .height(38.dp)
-                                .background(color = wholesaleBg, shape = RoundedCornerShape(20.dp))
+                                .height(36.dp)
+                                .background(color = wholesaleBg, shape = RoundedCornerShape(18.dp))
                                 .clickable { if (!editorState.isWholesaleMode) onToggleWholesale(true) }
-                                .padding(horizontal = 12.dp),
+                                .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "Wholesale",
-                                fontSize = 13.sp,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false,
                                 fontWeight = if (editorState.isWholesaleMode) FontWeight.Bold else FontWeight.Medium,
                                 color = wholesaleText
                             )
                         }
                     }
                 }
+            }
+        }
+
+        // Remembered Tier Hint Banner (moved out of 56dp header so both pills stay on one row at 360dp @ 1.3x)
+        if (!editorState.isOrder && rememberedTier != null && rememberedTier != editorState.isWholesaleMode) {
+            val tierLabel = if (rememberedTier) "Wholesale" else "Retail"
+            Surface(
+                onClick = { onToggleWholesale(rememberedTier) },
+                color = NurseryColors.BotanicalGreenLight,
+                border = BorderStroke(1.dp, NurseryColors.BotanicalGreen.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Last bill: $tierLabel — tap to switch",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NurseryColors.BotanicalGreen,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
             }
         }
 
@@ -577,26 +682,130 @@ fun ReviewEditorScreen(
                 colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft)
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    CompactTextField(
-                        value = editorState.memoNumber,
-                        onValueChange = onUpdateMemoNumber,
-                        label = { Text("Memo #", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    CompactTextField(
-                        value = editorState.date,
-                        onValueChange = onUpdateDate,
-                        label = { Text("Date (DD/MM/YYYY)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1.3f)
-                    )
+                    if (editorState.editingMemoId != null || !editorState.deliveringOrderId.isNullOrBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = when {
+                                    !editorState.deliveringOrderId.isNullOrBlank() -> "Delivering Order -> Cash Memo"
+                                    editorState.isOrder -> "Editing Order #${editorState.memoNumber}"
+                                    else -> "Editing Memo #${editorState.memoNumber}"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = NurseryColors.Maroon
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactTextField(
+                            value = editorState.memoNumber,
+                            onValueChange = onUpdateMemoNumber,
+                            label = {
+                                Text(
+                                    if (editorState.isOrder) "Order #" else "Memo #",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        CompactTextField(
+                            value = editorState.date,
+                            onValueChange = onUpdateDate,
+                            label = {
+                                Text(
+                                    if (editorState.isOrder) "Order Date" else "Date (DD/MM/YYYY)",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1.3f)
+                        )
+                    }
+                    if (editorState.isOrder) {
+                        Surface(
+                            onClick = { showDeliveryDatePicker = true },
+                            shape = RoundedCornerShape(10.dp),
+                            color = NurseryColors.CreamBackground,
+                            border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 44.dp)
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Expected Delivery (optional)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NurseryColors.MutedInk
+                                    )
+                                    Text(
+                                        text = editorState.dueDate.ifBlank { "Tap to select delivery date" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (editorState.dueDate.isNotBlank()) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (editorState.dueDate.isNotBlank()) NurseryColors.InkDark else NurseryColors.MutedInk
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (editorState.dueDate.isNotBlank()) {
+                                        IconButton(
+                                            onClick = { onUpdateDueDate("") },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = "Clear delivery date",
+                                                modifier = Modifier.size(16.dp),
+                                                tint = NurseryColors.MutedInk
+                                            )
+                                        }
+                                    }
+                                    Icon(
+                                        Icons.Default.CalendarToday,
+                                        contentDescription = "Pick delivery date",
+                                        tint = NurseryColors.Maroon,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (editorState.editingMemoId != null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OrderStatus.entries.forEach { status ->
+                                    FilterChip(
+                                        selected = editorState.orderStatus == status,
+                                        onClick = { onUpdateOrderStatus(status) },
+                                        label = { Text(status.label, style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1531,28 +1740,40 @@ fun ReviewEditorScreen(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        CompactTextField(
-                            value = editorState.previousDuesText,
-                            onValueChange = onUpdatePreviousDues,
-                            label = { Text("Previous Dues", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f)
-                        )
+                    if (!editorState.isOrder) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            CompactTextField(
+                                value = editorState.previousDuesText,
+                                onValueChange = onUpdatePreviousDues,
+                                label = { Text("Previous Dues", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f)
+                            )
 
+                            CompactTextField(
+                                value = editorState.paidAmountText,
+                                onValueChange = onUpdatePaidAmount,
+                                label = { Text("Paid (blank = full)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    } else {
                         CompactTextField(
                             value = editorState.paidAmountText,
                             onValueChange = onUpdatePaidAmount,
-                            label = { Text("Paid (blank = full)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            label = { Text("Advance Paid (optional)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("Cash", "Online", "Credit").forEach { method ->
+                        val methodOptions = if (editorState.isOrder) listOf("Cash", "Online") else listOf("Cash", "Online", "Credit")
+                        methodOptions.forEach { method ->
                             FilterChip(
                                 selected = editorState.paymentMethod.equals(method, ignoreCase = true),
                                 onClick = { onUpdatePaymentMethod(method) },
@@ -1565,7 +1786,13 @@ fun ReviewEditorScreen(
                     CompactTextField(
                         value = editorState.paymentStatusNote,
                         onValueChange = onUpdatePaymentNote,
-                        label = { Text("Settlement Note (e.g. Carry Forward, Paid Online)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        label = {
+                            Text(
+                                if (editorState.isOrder) "Order Note (optional)" else "Settlement Note (e.g. Carry Forward, Paid Online)",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences,
@@ -1585,11 +1812,18 @@ fun ReviewEditorScreen(
                         if (calc.taxAmount > 0.009) {
                             SummaryRow("Tax", "+ ${IndianCurrencyFormatter.formatInr(calc.taxAmount, settings.currencySymbol)}")
                         }
-                        if (calc.previousDues > 0.009) {
+                        if (!editorState.isOrder && calc.previousDues > 0.009) {
                             SummaryRow("Previous Dues", "+ ${IndianCurrencyFormatter.formatInr(calc.previousDues, settings.currencySymbol)}", valueColor = NurseryColors.DueRed)
                         }
-                        SummaryRow("Total Payable", IndianCurrencyFormatter.formatInr(calc.totalPayable, settings.currencySymbol), isBold = true)
-                        SummaryRow("Paid Amount", IndianCurrencyFormatter.formatInr(calc.effectivePaid, settings.currencySymbol))
+                        SummaryRow(
+                            if (editorState.isOrder) "Order Total" else "Total Payable",
+                            IndianCurrencyFormatter.formatInr(calc.totalPayable, settings.currencySymbol),
+                            isBold = true
+                        )
+                        SummaryRow(
+                            if (editorState.isOrder) "Advance Paid" else "Paid Amount",
+                            IndianCurrencyFormatter.formatInr(calc.effectivePaid, settings.currencySymbol)
+                        )
                         SummaryRow(
                             "Balance Due",
                             IndianCurrencyFormatter.formatInr(calc.balanceDue, settings.currencySymbol),
@@ -1659,27 +1893,48 @@ fun ReviewEditorScreen(
                                 }
                             }
                     ) {
-                        Text(
-                            text = "Total: ${IndianCurrencyFormatter.formatInr(calc.totalPayable, settings.currencySymbol)}",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = NurseryColors.DarkInk
-                        )
-                        if (calc.totalPayable > 0.009) {
-                            if (calc.balanceDue > 0.009) {
+                        if (editorState.isOrder) {
+                            Text(
+                                text = "Total: ${IndianCurrencyFormatter.formatInr(calc.totalPayable, settings.currencySymbol)} • Adv: ${IndianCurrencyFormatter.formatInr(calc.effectivePaid, settings.currencySymbol)}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = NurseryColors.DarkInk,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (calc.totalPayable > 0.009) {
                                 Text(
-                                    text = "Due: ${IndianCurrencyFormatter.formatInr(calc.balanceDue, settings.currencySymbol)}",
+                                    text = "Bal: ${IndianCurrencyFormatter.formatInr(calc.balanceDue, settings.currencySymbol)}",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = NurseryColors.DueRed
+                                    color = if (calc.balanceDue > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                            } else {
-                                Text(
-                                    text = "Fully Paid",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = NurseryColors.BotanicalGreen
-                                )
+                            }
+                        } else {
+                            Text(
+                                text = "Total: ${IndianCurrencyFormatter.formatInr(calc.totalPayable, settings.currencySymbol)}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = NurseryColors.DarkInk
+                            )
+                            if (calc.totalPayable > 0.009) {
+                                if (calc.balanceDue > 0.009) {
+                                    Text(
+                                        text = "Due: ${IndianCurrencyFormatter.formatInr(calc.balanceDue, settings.currencySymbol)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = NurseryColors.DueRed
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Fully Paid",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = NurseryColors.BotanicalGreen
+                                    )
+                                }
                             }
                         }
                     }

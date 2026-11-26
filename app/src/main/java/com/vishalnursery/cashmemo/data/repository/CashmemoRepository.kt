@@ -12,6 +12,8 @@ import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
 import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PaymentAllocation
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.model.round2
@@ -71,6 +73,9 @@ class CashmemoRepository(
     val paymentsFlow: Flow<List<CustomerPayment>> =
         paymentDao.observeAllPayments().map { list -> list.map { it.toDomain() } }
 
+    val ordersFlow: Flow<List<CashMemo>> =
+        memoDao.observeOrders().map { list -> list.map { it.toDomain() } }
+
     val customersFlow: Flow<List<CustomerProfile>> =
         customerDao.observeAllCustomers().map { list -> list.map { it.toDomain() } }
 
@@ -94,10 +99,22 @@ class CashmemoRepository(
         }
     }
 
-    suspend fun saveMemo(memo: CashMemo): Result<CashMemo> = withContext(Dispatchers.IO) {
+    suspend fun saveMemo(memo: CashMemo, linkedOrderId: String? = null): Result<CashMemo> = withContext(Dispatchers.IO) {
         runCatching {
             val now = System.currentTimeMillis()
+            if (memo.isOrder) {
+                val cleanOrder = memo.copy(
+                    memoType = MemoType.ORDER,
+                    previousDues = 0.0,
+                    updatedAt = now
+                )
+                memoDao.upsertMemoWithItems(cleanOrder.toEntity(), cleanOrder.toItemEntities())
+                settingsDataStore.incrementNextOrderIfNeeded(cleanOrder.memoNumber)
+                return@runCatching cleanOrder
+            }
+
             val cleanMemo = memo.copy(
+                memoType = MemoType.CASH,
                 updatedAt = now,
                 paymentStatusNote = if (memo.balanceDue > 0.009) {
                     memo.paymentStatusNote.ifBlank { "Carry Forward" }
@@ -109,6 +126,20 @@ class CashmemoRepository(
 
             memoDao.upsertMemoWithItems(cleanMemo.toEntity(), cleanMemo.toItemEntities())
             settingsDataStore.incrementNextMemoIfNeeded(cleanMemo.memoNumber)
+
+            if (!linkedOrderId.isNullOrBlank()) {
+                val orderEntity = memoDao.getMemoById(linkedOrderId)?.memo
+                if (orderEntity != null && orderEntity.memoType == MemoType.ORDER.wireValue) {
+                    memoDao.insertMemo(
+                        orderEntity.copy(
+                            orderStatus = OrderStatus.DELIVERED.wireValue,
+                            linkedMemoId = cleanMemo.id,
+                            updatedAt = now
+                        )
+                    )
+                }
+            }
+
             reconcileCustomerFromMemos(cleanMemo.customerName, cleanMemo.customerMobile, cleanMemo.customerAddress)
             if (previousVersion != null &&
                 !sameCustomerKey(previousVersion.customerName, previousVersion.customerMobile, cleanMemo.customerName, cleanMemo.customerMobile)
@@ -131,8 +162,37 @@ class CashmemoRepository(
         }
     }
 
+    suspend fun updateOrderStatus(orderId: String, status: OrderStatus): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val entity = memoDao.getMemoById(orderId)?.memo ?: error("Order not found")
+            val updated = entity.copy(
+                orderStatus = status.wireValue,
+                linkedMemoId = if (status == OrderStatus.PENDING) "" else entity.linkedMemoId,
+                updatedAt = System.currentTimeMillis()
+            )
+            memoDao.insertMemo(updated)
+        }
+    }
+
     suspend fun deleteMemo(id: String) = withContext(Dispatchers.IO) {
         val existingMemo = memoDao.getMemoById(id)?.toDomain()
+        if (existingMemo != null && existingMemo.isOrder) {
+            memoDao.deleteMemoById(id)
+            return@withContext
+        }
+        val linkedOrders = memoDao.getOrdersByLinkedMemoId(id)
+        if (linkedOrders.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            for (ord in linkedOrders) {
+                memoDao.insertMemo(
+                    ord.memo.copy(
+                        orderStatus = OrderStatus.PENDING.wireValue,
+                        linkedMemoId = "",
+                        updatedAt = now
+                    )
+                )
+            }
+        }
         paymentDao.deleteAllocationsForMemo(id)
         memoDao.deleteMemoById(id)
         if (existingMemo != null) {
@@ -352,7 +412,7 @@ class CashmemoRepository(
 
     suspend fun exportBackupJson(): String = withContext(Dispatchers.IO) {
         val settings = settingsDataStore.getSettingsOnce()
-        val memos = memoDao.getAllMemosOnce().map { it.toDomain().toDto() }
+        val memos = memoDao.getEverythingOnce().map { it.toDomain().toDto() }
         val customers = customerDao.getAllCustomersOnce().map { it.toDomain().toDto() }
         val rates = rateDao.getAllRatesOnce().map { it.toDomain().toDto() }
         val payments = paymentDao.getAllPaymentsOnce().map { it.toDomain().toDto() }

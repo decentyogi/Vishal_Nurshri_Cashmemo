@@ -89,7 +89,7 @@ class SyncManager(
 
     suspend fun createSafetySnapshot(): File = withContext(Dispatchers.IO) {
         val settings = settingsDataStore.getSettingsOnce()
-        val memos = memoDao.getAllMemosOnce().map { it.toDomain().toDto() }
+        val memos = memoDao.getEverythingOnce().map { it.toDomain().toDto() }
         val customers = customerDao.getAllCustomersOnce().map { it.toDomain().toDto() }
         val rates = rateDao.getAllRatesOnce().map { it.toDomain().toDto() }
         val payments = paymentDao.getAllPaymentsOnce().map { it.toDomain().toDto() }

@@ -21,6 +21,8 @@ import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoItem
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PaymentAllocation
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 
@@ -50,6 +52,9 @@ fun MemoWithItems.toDomain(laterPaid: Double = 0.0): CashMemo = CashMemo(
     sourceImageUri = memo.sourceImageUri,
     isWholesale = memo.isWholesale,
     isSynced = memo.isSynced,
+    memoType = MemoType.fromWire(memo.memoType),
+    orderStatus = OrderStatus.fromWire(memo.orderStatus),
+    linkedMemoId = memo.linkedMemoId,
     laterPaid = laterPaid,
     createdAt = memo.createdAt,
     updatedAt = memo.updatedAt
@@ -88,6 +93,9 @@ fun CashMemo.toEntity(): CashMemoEntity = CashMemoEntity(
     sourceImageUri = sourceImageUri,
     isWholesale = isWholesale,
     isSynced = isSynced,
+    memoType = memoType.wireValue,
+    orderStatus = if (memoType == MemoType.ORDER) orderStatus.wireValue else "",
+    linkedMemoId = linkedMemoId,
     createdAt = createdAt,
     updatedAt = updatedAt
 )
@@ -135,6 +143,9 @@ fun CashMemo.toDto(): BillDto = BillDto(
     paymentStatusNote = paymentStatusNote,
     notes = notes,
     isWholesale = isWholesale,
+    memoType = memoType.wireValue,
+    orderStatus = if (memoType == MemoType.ORDER) orderStatus.wireValue else "",
+    linkedMemoId = linkedMemoId,
     createdAt = createdAt,
     updatedAt = updatedAt
 )
@@ -171,6 +182,9 @@ fun BillDto.toDomain(synced: Boolean = true): CashMemo = CashMemo(
     notes = notes,
     isWholesale = isWholesale ?: false,
     isSynced = synced,
+    memoType = MemoType.fromWire(memoType),
+    orderStatus = OrderStatus.fromWire(orderStatus),
+    linkedMemoId = linkedMemoId ?: "",
     createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
     updatedAt = if (updatedAt > 0L) updatedAt else 0L
 )
@@ -275,6 +289,7 @@ fun BusinessSettings.toDto(): SettingsDto = SettingsDto(
     currencySymbol = currencySymbol,
     memoPrefix = memoPrefix,
     nextMemoNumber = nextMemoNumber,
+    nextOrderNumber = nextOrderNumber,
     defaultTaxPercentage = defaultTaxPercentage,
     enableTax = enableTax,
     taxType = taxType,
@@ -296,6 +311,7 @@ fun SettingsDto.mergeInto(current: BusinessSettings): BusinessSettings = current
     currencySymbol = currencySymbol.ifBlank { "₹" },
     memoPrefix = memoPrefix.ifBlank { current.memoPrefix },
     nextMemoNumber = maxOf(current.nextMemoNumber, nextMemoNumber),
+    nextOrderNumber = maxOf(current.nextOrderNumber, nextOrderNumber ?: current.nextOrderNumber),
     defaultTaxPercentage = defaultTaxPercentage,
     enableTax = enableTax,
     taxType = taxType.ifBlank { "GST" },

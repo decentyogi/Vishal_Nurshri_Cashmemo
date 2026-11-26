@@ -34,6 +34,9 @@ data class CashMemoEntity(
     val sourceImageUri: String,
     @ColumnInfo(defaultValue = "0") val isWholesale: Boolean = false,
     val isSynced: Boolean,
+    @ColumnInfo(defaultValue = "'CASH'") val memoType: String = "CASH",
+    @ColumnInfo(defaultValue = "''") val orderStatus: String = "",
+    @ColumnInfo(defaultValue = "''") val linkedMemoId: String = "",
     val createdAt: Long,
     val updatedAt: Long
 )

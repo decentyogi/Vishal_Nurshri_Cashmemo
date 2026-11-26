@@ -14,6 +14,7 @@ data class SettingsDto(
     @SerializedName("currencySymbol") val currencySymbol: String = "₹",
     @SerializedName("memoPrefix") val memoPrefix: String = "VN-",
     @SerializedName("nextMemoNumber") val nextMemoNumber: Int = 1001,
+    @SerializedName("nextOrderNumber") val nextOrderNumber: Int? = null,
     @SerializedName("defaultTaxPercentage") val defaultTaxPercentage: Double = 0.0,
     @SerializedName("enableTax") val enableTax: Boolean = false,
     @SerializedName("taxType") val taxType: String = "GST",
@@ -55,6 +56,9 @@ data class BillDto(
     @SerializedName("paymentStatusNote") val paymentStatusNote: String = "Carry Forward",
     @SerializedName("notes") val notes: String = "",
     @SerializedName("isWholesale") val isWholesale: Boolean? = null,
+    @SerializedName("memoType") val memoType: String? = null,
+    @SerializedName("orderStatus") val orderStatus: String? = null,
+    @SerializedName("linkedMemoId") val linkedMemoId: String? = null,
     @SerializedName("createdAt") val createdAt: Long = 0L,
     @SerializedName("updatedAt") val updatedAt: Long = 0L
 )

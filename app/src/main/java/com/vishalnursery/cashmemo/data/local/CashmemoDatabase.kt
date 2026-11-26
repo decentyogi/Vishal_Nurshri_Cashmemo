@@ -81,6 +81,9 @@ abstract class CashmemoDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_payment_allocations_paymentId` ON `payment_allocations` (`paymentId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_payment_allocations_memoId` ON `payment_allocations` (`memoId`)")
+                db.execSQL("ALTER TABLE cash_memos ADD COLUMN memoType TEXT NOT NULL DEFAULT 'CASH'")
+                db.execSQL("ALTER TABLE cash_memos ADD COLUMN orderStatus TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cash_memos ADD COLUMN linkedMemoId TEXT NOT NULL DEFAULT ''")
             }
         }
 

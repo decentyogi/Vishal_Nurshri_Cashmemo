@@ -284,6 +284,13 @@ enum class MemoFilter(val label: String, val wireValue: String) {
     PAID("Paid", "PAID")
 }
 
+enum class OrderFilter(val label: String) {
+    ALL("All"),
+    PENDING("Pending"),
+    DELIVERED("Delivered"),
+    CANCELLED("Cancelled")
+}
+
 data class MemoCalculationResult(
     val subtotal: Double,
     val overallDiscountAmount: Double,
@@ -350,6 +357,13 @@ data class DashboardStats(
     val totalSales: Double = 0.0,
     val totalCollected: Double = 0.0,
     val totalPendingDues: Double = 0.0
+)
+
+data class OrderStats(
+    val totalOrders: Int = 0,
+    val pendingCount: Int = 0,
+    val advanceCollected: Double = 0.0,
+    val pendingBalance: Double = 0.0
 )
 
 fun Double.finiteOrZero(): Double = if (isFinite()) this else 0.0

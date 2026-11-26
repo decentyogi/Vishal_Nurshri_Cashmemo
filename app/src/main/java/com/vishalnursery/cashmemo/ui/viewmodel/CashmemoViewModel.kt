@@ -24,6 +24,8 @@ import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
 import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderFilter
+import com.vishalnursery.cashmemo.domain.model.OrderStats
 import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.model.RateNameStyle
@@ -32,6 +34,7 @@ import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.domain.model.round2
 import com.vishalnursery.cashmemo.domain.util.AiTextParser
 import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
+import com.vishalnursery.cashmemo.domain.util.DateUtils
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 import kotlinx.coroutines.Job
@@ -59,15 +62,17 @@ class CashmemoViewModel(
     private val searchQueryFlow = MutableStateFlow("")
     private val selectedHistoryDateFlow = MutableStateFlow("")
     private val historyFilterFlow = MutableStateFlow(MemoFilter.ALL)
+    private val orderFilterFlow = MutableStateFlow(OrderFilter.ALL)
     private val historyTabFlow = MutableStateFlow(0)
 
     private val historyControlsFlow = combine(
         searchQueryFlow,
         selectedHistoryDateFlow,
         historyFilterFlow,
+        orderFilterFlow,
         historyTabFlow
-    ) { query, date, filter, tab ->
-        HistoryControls(query, date, filter, tab)
+    ) { query, date, filter, orderFilter, tab ->
+        HistoryControls(query, date, filter, orderFilter, tab)
     }
 
     private val _uiState = MutableStateFlow(CashmemoUiState())
@@ -94,25 +99,37 @@ class CashmemoViewModel(
                 val (customers, rates) = custRates
                 val (settings, controls) = settingsControls
                 val filtered = filterMemos(memos, controls.query, controls.selectedDate, controls.filter)
+                val filteredOrders = filterOrders(orders, controls.query, controls.selectedDate, controls.orderFilter)
                 val stats = DashboardStats(
                     totalMemos = memos.size,
                     totalSales = round2(memos.sumOf { it.grandTotal }),
                     totalCollected = round2(memos.sumOf { it.paidAmount } + payments.sumOf { it.amount }),
                     totalPendingDues = round2(memos.sumOf { it.effectiveDue })
                 )
+                val activeOrders = orders.filter { it.orderStatus != OrderStatus.CANCELLED }
+                val pendingOrders = orders.filter { it.orderStatus == OrderStatus.PENDING }
+                val orderStats = OrderStats(
+                    totalOrders = orders.size,
+                    pendingCount = pendingOrders.size,
+                    advanceCollected = round2(activeOrders.sumOf { it.paidAmount }),
+                    pendingBalance = round2(pendingOrders.sumOf { it.balanceDue })
+                )
                 QuadrupleResult(
                     memos = memos,
                     orders = orders,
                     payments = payments,
                     filtered = filtered,
+                    filteredOrders = filteredOrders,
                     customers = customers,
                     rates = rates,
                     settings = settings,
                     query = controls.query,
                     selectedDate = controls.selectedDate,
                     filter = controls.filter,
+                    orderFilter = controls.orderFilter,
                     historyTab = controls.historyTab,
-                    stats = stats
+                    stats = stats,
+                    orderStats = orderStats
                 )
             }.collect { data ->
                 _uiState.update { current ->
@@ -132,14 +149,17 @@ class CashmemoViewModel(
                         allOrders = data.orders,
                         payments = data.payments,
                         filteredMemos = data.filtered,
+                        filteredOrders = data.filteredOrders,
                         customers = data.customers,
                         plantRates = data.rates,
                         settings = data.settings,
                         searchQuery = data.query,
                         selectedHistoryDate = data.selectedDate,
                         historyFilter = data.filter,
+                        orderFilter = data.orderFilter,
                         historyTab = data.historyTab,
                         dashboardStats = data.stats,
+                        orderStats = data.orderStats,
                         editor = updatedEditor
                     )
                 }
@@ -1149,6 +1169,11 @@ class CashmemoViewModel(
         _uiState.update { it.copy(historyFilter = filter) }
     }
 
+    fun updateOrderFilter(filter: OrderFilter) {
+        orderFilterFlow.value = filter
+        _uiState.update { it.copy(orderFilter = filter) }
+    }
+
     fun setHistoryTab(tab: Int) {
         historyTabFlow.value = tab
         _uiState.update { it.copy(historyTab = tab) }
@@ -1801,31 +1826,65 @@ class CashmemoViewModel(
         }
     }
 
+    private fun matchesQueryAndDate(
+        memo: CashMemo,
+        query: String,
+        selectedDate: String
+    ): Boolean {
+        val q = query.trim().lowercase()
+        val d = selectedDate.trim()
+        if (d.isNotEmpty() && memo.date.trim() != d) return false
+        if (q.isEmpty()) return true
+        return memo.memoNumber.lowercase().contains(q) ||
+            memo.customerName.lowercase().contains(q) ||
+            memo.customerMobile.lowercase().contains(q) ||
+            memo.customerAddress.lowercase().contains(q) ||
+            memo.date.lowercase().contains(q) ||
+            memo.dueDate.lowercase().contains(q) ||
+            memo.items.any { it.description.lowercase().contains(q) }
+    }
+
     private fun filterMemos(
         memos: List<CashMemo>,
         query: String,
         selectedDate: String,
         filter: MemoFilter
     ): List<CashMemo> {
-        val q = query.trim().lowercase()
-        val d = selectedDate.trim()
         return memos.filter { memo ->
             val matchesFilter = when (filter) {
                 MemoFilter.ALL -> true
                 MemoFilter.PENDING_DUE -> memo.hasEffectivePendingDue
                 MemoFilter.PAID -> !memo.hasEffectivePendingDue
             }
-            if (!matchesFilter) return@filter false
-            if (d.isNotEmpty() && memo.date.trim() != d) return@filter false
-            if (q.isEmpty()) return@filter true
-
-            memo.memoNumber.lowercase().contains(q) ||
-                memo.customerName.lowercase().contains(q) ||
-                memo.customerMobile.lowercase().contains(q) ||
-                memo.customerAddress.lowercase().contains(q) ||
-                memo.date.lowercase().contains(q) ||
-                memo.items.any { it.description.lowercase().contains(q) }
+            matchesFilter && matchesQueryAndDate(memo, query, selectedDate)
         }
+    }
+
+    private fun filterOrders(
+        orders: List<CashMemo>,
+        query: String,
+        selectedDate: String,
+        filter: OrderFilter
+    ): List<CashMemo> {
+        return orders.filter { order ->
+            val matchesFilter = when (filter) {
+                OrderFilter.ALL -> true
+                OrderFilter.PENDING -> order.orderStatus == OrderStatus.PENDING
+                OrderFilter.DELIVERED -> order.orderStatus == OrderStatus.DELIVERED
+                OrderFilter.CANCELLED -> order.orderStatus == OrderStatus.CANCELLED
+            }
+            matchesFilter && matchesQueryAndDate(order, query, selectedDate)
+        }.sortedWith(
+            compareBy<CashMemo> {
+                when (it.orderStatus) {
+                    OrderStatus.PENDING -> 0
+                    OrderStatus.DELIVERED -> 1
+                    OrderStatus.CANCELLED -> 2
+                }
+            }.thenBy {
+                if (it.orderStatus == OrderStatus.PENDING) DateUtils.dateSortKey(it.dueDate) else 0L
+            }.thenByDescending { it.createdAt }
+        )
     }
 
     private fun CashMemo.toEditorState(isNewDraft: Boolean): EditorUiState {
@@ -1870,6 +1929,7 @@ class CashmemoViewModel(
         val query: String,
         val selectedDate: String,
         val filter: MemoFilter,
+        val orderFilter: OrderFilter,
         val historyTab: Int
     )
 
@@ -1878,14 +1938,17 @@ class CashmemoViewModel(
         val orders: List<CashMemo>,
         val payments: List<CustomerPayment>,
         val filtered: List<CashMemo>,
+        val filteredOrders: List<CashMemo>,
         val customers: List<CustomerProfile>,
         val rates: List<PlantRate>,
         val settings: BusinessSettings,
         val query: String,
         val selectedDate: String,
         val filter: MemoFilter,
+        val orderFilter: OrderFilter,
         val historyTab: Int,
-        val stats: DashboardStats
+        val stats: DashboardStats,
+        val orderStats: OrderStats
     )
 
     class Factory(

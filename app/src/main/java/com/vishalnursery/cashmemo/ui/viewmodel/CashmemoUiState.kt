@@ -11,6 +11,8 @@ import com.vishalnursery.cashmemo.domain.model.MemoCalculationResult
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
 import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderFilter
+import com.vishalnursery.cashmemo.domain.model.OrderStats
 import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
@@ -141,6 +143,9 @@ data class CashmemoUiState(
     val allMemos: List<CashMemo> = emptyList(),
     val filteredMemos: List<CashMemo> = emptyList(),
     val allOrders: List<CashMemo> = emptyList(),
+    val filteredOrders: List<CashMemo> = emptyList(),
+    val orderStats: OrderStats = OrderStats(),
+    val orderFilter: OrderFilter = OrderFilter.ALL,
     val historyTab: Int = 0,
     val searchQuery: String = "",
     val selectedHistoryDate: String = "",

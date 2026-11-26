@@ -7,6 +7,27 @@ import java.util.UUID
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+enum class MemoType(val wireValue: String, val label: String) {
+    CASH("CASH", "Cash Memo"),
+    ORDER("ORDER", "Order Memo");
+
+    companion object {
+        fun fromWire(value: String?): MemoType =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) } ?: CASH
+    }
+}
+
+enum class OrderStatus(val wireValue: String, val label: String) {
+    PENDING("PENDING", "Pending"),
+    DELIVERED("DELIVERED", "Delivered"),
+    CANCELLED("CANCELLED", "Cancelled");
+
+    companion object {
+        fun fromWire(value: String?): OrderStatus =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) } ?: PENDING
+    }
+}
+
 /**
  * Core domain entity representing a cash memo / invoice, compatible with Cashmemo_AI_Web.
  */
@@ -36,14 +57,30 @@ data class CashMemo(
     val sourceImageUri: String = "",
     val isWholesale: Boolean = false,
     val isSynced: Boolean = false,
+    val memoType: MemoType = MemoType.CASH,
+    val orderStatus: OrderStatus = OrderStatus.PENDING,
+    val linkedMemoId: String = "",
+    val laterPaid: Double = 0.0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
+    val isOrder: Boolean
+        get() = memoType == MemoType.ORDER
+
     val totalPayable: Double
         get() = round2(grandTotal + previousDues)
 
     val hasPendingDue: Boolean
         get() = balanceDue > 0.009
+
+    val effectivePaid: Double
+        get() = round2(paidAmount + laterPaid)
+
+    val effectiveDue: Double
+        get() = round2(max(0.0, balanceDue - laterPaid))
+
+    val hasEffectivePendingDue: Boolean
+        get() = effectiveDue > 0.009
 
     companion object {
         fun newMemoId(): String =
@@ -88,6 +125,26 @@ data class CustomerProfile(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+data class PaymentAllocation(
+    val id: String = "alloc_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}",
+    val paymentId: String = "",
+    val memoId: String,
+    val amount: Double
+)
+
+data class CustomerPayment(
+    val id: String = "pay_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}",
+    val customerId: String = "",
+    val customerName: String = "",
+    val customerMobile: String = "",
+    val amount: Double,
+    val method: String = "Cash",
+    val note: String = "",
+    val date: String = CashMemo.todayFormatted(),
+    val createdAt: Long = System.currentTimeMillis(),
+    val allocations: List<PaymentAllocation> = emptyList()
+)
+
 data class PlantRate(
     val id: String = "pr_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(4)}",
     val name: String,
@@ -95,7 +152,16 @@ data class PlantRate(
     val retailPrice: Double = 0.0,
     val wholesalePrice: Double = 0.0,
     val updatedAt: Long = System.currentTimeMillis()
-)
+) {
+    fun hasPriceForTier(isWholesale: Boolean): Boolean =
+        if (isWholesale) wholesalePrice > 0.0 else retailPrice > 0.0
+
+    fun priceForTier(isWholesale: Boolean): Double = if (isWholesale) {
+        if (wholesalePrice > 0.0) wholesalePrice else retailPrice
+    } else {
+        if (retailPrice > 0.0) retailPrice else wholesalePrice
+    }
+}
 
 data class BusinessSettings(
     val shopNameHindi: String = "विशाल नर्सरी",
@@ -109,6 +175,7 @@ data class BusinessSettings(
     val currencySymbol: String = "₹",
     val memoPrefix: String = "VN-",
     val nextMemoNumber: Int = 1001,
+    val nextOrderNumber: Int = 101,
     val defaultTaxPercentage: Double = 0.0,
     val enableTax: Boolean = false,
     val taxType: String = "GST",
@@ -135,6 +202,7 @@ fun BusinessSettings.normalized(): BusinessSettings {
         gstin = cleanGstin,
         currencySymbol = currencySymbol.ifBlank { "₹" },
         nextMemoNumber = nextMemoNumber.coerceAtLeast(1),
+        nextOrderNumber = nextOrderNumber.coerceAtLeast(1),
         upiVpa = upiVpa.trim(),
         upiDefaultNote = upiDefaultNote.trim(),
         termsNote = termsNote.ifBlank { defaults.termsNote },
@@ -216,6 +284,13 @@ enum class MemoFilter(val label: String, val wireValue: String) {
     PAID("Paid", "PAID")
 }
 
+enum class OrderFilter(val label: String) {
+    ALL("All"),
+    PENDING("Pending"),
+    DELIVERED("Delivered"),
+    CANCELLED("Cancelled")
+}
+
 data class MemoCalculationResult(
     val subtotal: Double,
     val overallDiscountAmount: Double,
@@ -283,6 +358,55 @@ data class DashboardStats(
     val totalCollected: Double = 0.0,
     val totalPendingDues: Double = 0.0
 )
+
+data class OrderStats(
+    val totalOrders: Int = 0,
+    val pendingCount: Int = 0,
+    val advanceCollected: Double = 0.0,
+    val pendingBalance: Double = 0.0
+)
+
+data class GeneralNote(
+    val id: String = "note_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(5)}",
+    val title: String = "",
+    val body: String = "",
+    val customerId: String = "",
+    val customerName: String = "",
+    val isPinned: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+enum class TodoPriority(val wireValue: String, val label: String) {
+    LOW("LOW", "Low"),
+    MEDIUM("MEDIUM", "Medium"),
+    HIGH("HIGH", "High");
+
+    companion object {
+        fun fromWire(value: String?): TodoPriority =
+            entries.firstOrNull { it.wireValue.equals(value?.trim(), ignoreCase = true) } ?: MEDIUM
+    }
+}
+
+data class TodoTask(
+    val id: String = "todo_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(5)}",
+    val title: String = "",
+    val dueDate: String = "",
+    val priority: TodoPriority = TodoPriority.MEDIUM,
+    val customerId: String = "",
+    val customerName: String = "",
+    val isDone: Boolean = false,
+    val doneAt: Long = 0L,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+enum class TodoFilter(val label: String) {
+    ALL("All"),
+    PENDING("Pending"),
+    OVERDUE("Overdue"),
+    DONE("Done")
+}
 
 fun Double.finiteOrZero(): Double = if (isFinite()) this else 0.0
 

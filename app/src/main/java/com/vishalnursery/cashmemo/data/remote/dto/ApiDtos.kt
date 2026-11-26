@@ -14,6 +14,7 @@ data class SettingsDto(
     @SerializedName("currencySymbol") val currencySymbol: String = "₹",
     @SerializedName("memoPrefix") val memoPrefix: String = "VN-",
     @SerializedName("nextMemoNumber") val nextMemoNumber: Int = 1001,
+    @SerializedName("nextOrderNumber") val nextOrderNumber: Int? = null,
     @SerializedName("defaultTaxPercentage") val defaultTaxPercentage: Double = 0.0,
     @SerializedName("enableTax") val enableTax: Boolean = false,
     @SerializedName("taxType") val taxType: String = "GST",
@@ -55,6 +56,9 @@ data class BillDto(
     @SerializedName("paymentStatusNote") val paymentStatusNote: String = "Carry Forward",
     @SerializedName("notes") val notes: String = "",
     @SerializedName("isWholesale") val isWholesale: Boolean? = null,
+    @SerializedName("memoType") val memoType: String? = null,
+    @SerializedName("orderStatus") val orderStatus: String? = null,
+    @SerializedName("linkedMemoId") val linkedMemoId: String? = null,
     @SerializedName("createdAt") val createdAt: Long = 0L,
     @SerializedName("updatedAt") val updatedAt: Long = 0L
 )
@@ -96,12 +100,59 @@ data class GenericSuccessDto(
     @SerializedName("message") val message: String? = null
 )
 
+data class PaymentAllocationDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("paymentId") val paymentId: String = "",
+    @SerializedName("memoId") val memoId: String = "",
+    @SerializedName("amount") val amount: Double = 0.0
+)
+
+data class PaymentDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("customerId") val customerId: String = "",
+    @SerializedName("customerName") val customerName: String = "",
+    @SerializedName("customerMobile") val customerMobile: String = "",
+    @SerializedName("amount") val amount: Double = 0.0,
+    @SerializedName("method") val method: String = "Cash",
+    @SerializedName("note") val note: String = "",
+    @SerializedName("date") val date: String = "",
+    @SerializedName("createdAt") val createdAt: Long = 0L,
+    @SerializedName("allocations") val allocations: List<PaymentAllocationDto>? = null
+)
+
+data class NoteDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("title") val title: String = "",
+    @SerializedName("body") val body: String = "",
+    @SerializedName("customerId") val customerId: String = "",
+    @SerializedName("customerName") val customerName: String = "",
+    @SerializedName("isPinned") val isPinned: Boolean = false,
+    @SerializedName("createdAt") val createdAt: Long = 0L,
+    @SerializedName("updatedAt") val updatedAt: Long = 0L
+)
+
+data class TodoDto(
+    @SerializedName("id") val id: String = "",
+    @SerializedName("title") val title: String = "",
+    @SerializedName("dueDate") val dueDate: String = "",
+    @SerializedName("priority") val priority: String = "MEDIUM",
+    @SerializedName("customerId") val customerId: String = "",
+    @SerializedName("customerName") val customerName: String = "",
+    @SerializedName("isDone") val isDone: Boolean = false,
+    @SerializedName("doneAt") val doneAt: Long = 0L,
+    @SerializedName("createdAt") val createdAt: Long = 0L,
+    @SerializedName("updatedAt") val updatedAt: Long = 0L
+)
+
 data class BackupPayloadDto(
-    @SerializedName("version") val version: Int = 6,
+    @SerializedName("version") val version: Int = 7,
     @SerializedName("appName") val appName: String = "Vishal_Nurshri_Cashmemo_Android",
     @SerializedName("exportDate") val exportDate: String = "",
     @SerializedName("settings") val settings: SettingsDto? = null,
-    @SerializedName("bills") val bills: List<BillDto> = emptyList(),
-    @SerializedName("customers") val customers: List<CustomerDto> = emptyList(),
-    @SerializedName("rates") val rates: List<PlantRateDto> = emptyList()
+    @SerializedName("bills") val bills: List<BillDto>? = emptyList(),
+    @SerializedName("customers") val customers: List<CustomerDto>? = emptyList(),
+    @SerializedName("rates") val rates: List<PlantRateDto>? = emptyList(),
+    @SerializedName("payments") val payments: List<PaymentDto>? = emptyList(),
+    @SerializedName("notes") val notes: List<NoteDto>? = emptyList(),
+    @SerializedName("todos") val todos: List<TodoDto>? = emptyList()
 )

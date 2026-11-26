@@ -9,19 +9,40 @@ import com.vishalnursery.cashmemo.data.local.entity.CashMemoEntity
 import com.vishalnursery.cashmemo.data.local.entity.CustomerEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoItemEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoWithItems
+import com.vishalnursery.cashmemo.data.local.entity.NoteEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentAllocationEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentWithAllocations
 import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
+import com.vishalnursery.cashmemo.data.local.entity.TodoEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface MemoDao {
 
     @Transaction
-    @Query("SELECT * FROM cash_memos ORDER BY createdAt DESC")
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'CASH' ORDER BY createdAt DESC")
     fun observeAllMemos(): Flow<List<MemoWithItems>>
 
     @Transaction
-    @Query("SELECT * FROM cash_memos ORDER BY createdAt DESC")
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'CASH' ORDER BY createdAt DESC")
     suspend fun getAllMemosOnce(): List<MemoWithItems>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'ORDER' ORDER BY createdAt DESC")
+    fun observeOrders(): Flow<List<MemoWithItems>>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'ORDER' ORDER BY createdAt DESC")
+    suspend fun getOrdersOnce(): List<MemoWithItems>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos ORDER BY createdAt DESC")
+    suspend fun getEverythingOnce(): List<MemoWithItems>
+
+    @Transaction
+    @Query("SELECT * FROM cash_memos WHERE memoType = 'ORDER' AND linkedMemoId = :memoId")
+    suspend fun getOrdersByLinkedMemoId(memoId: String): List<MemoWithItems>
 
     @Transaction
     @Query("SELECT * FROM cash_memos WHERE id = :id LIMIT 1")
@@ -103,4 +124,91 @@ interface PlantRateDao {
 
     @Query("DELETE FROM plant_rates")
     suspend fun deleteAllRates()
+}
+
+@Dao
+interface PaymentDao {
+
+    @Transaction
+    @Query("SELECT * FROM payments ORDER BY createdAt DESC")
+    fun observeAllPayments(): Flow<List<PaymentWithAllocations>>
+
+    @Query("SELECT * FROM payment_allocations")
+    fun observeAllAllocations(): Flow<List<PaymentAllocationEntity>>
+
+    @Transaction
+    @Query("SELECT * FROM payments ORDER BY createdAt DESC")
+    suspend fun getAllPaymentsOnce(): List<PaymentWithAllocations>
+
+    @Query("SELECT * FROM payment_allocations")
+    suspend fun getAllAllocationsOnce(): List<PaymentAllocationEntity>
+
+    @Transaction
+    @Query("SELECT * FROM payments WHERE id = :id LIMIT 1")
+    suspend fun getPaymentById(id: String): PaymentWithAllocations?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPayment(payment: PaymentEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllocations(allocations: List<PaymentAllocationEntity>)
+
+    @Query("DELETE FROM payment_allocations WHERE paymentId = :paymentId")
+    suspend fun deleteAllocationsForPayment(paymentId: String)
+
+    @Query("DELETE FROM payment_allocations WHERE memoId = :memoId")
+    suspend fun deleteAllocationsForMemo(memoId: String)
+
+    @Transaction
+    suspend fun upsertPaymentWithAllocations(
+        payment: PaymentEntity,
+        allocations: List<PaymentAllocationEntity>
+    ) {
+        insertPayment(payment)
+        deleteAllocationsForPayment(payment.id)
+        if (allocations.isNotEmpty()) {
+            insertAllocations(allocations)
+        }
+    }
+
+    @Query("DELETE FROM payments WHERE id = :id")
+    suspend fun deletePaymentById(id: String)
+}
+
+@Dao
+interface NoteDao {
+
+    @Query("SELECT * FROM notes ORDER BY isPinned DESC, updatedAt DESC")
+    fun observeAllNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes ORDER BY isPinned DESC, updatedAt DESC")
+    suspend fun getAllNotesOnce(): List<NoteEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertNote(note: NoteEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(notes: List<NoteEntity>)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun deleteNoteById(id: String)
+}
+
+@Dao
+interface TodoDao {
+
+    @Query("SELECT * FROM todos ORDER BY isDone ASC, createdAt DESC")
+    fun observeAllTodos(): Flow<List<TodoEntity>>
+
+    @Query("SELECT * FROM todos ORDER BY isDone ASC, createdAt DESC")
+    suspend fun getAllTodosOnce(): List<TodoEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTodo(todo: TodoEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(todos: List<TodoEntity>)
+
+    @Query("DELETE FROM todos WHERE id = :id")
+    suspend fun deleteTodoById(id: String)
 }

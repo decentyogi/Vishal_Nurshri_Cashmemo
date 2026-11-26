@@ -3,12 +3,17 @@ package com.vishalnursery.cashmemo.ui.viewmodel
 import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DashboardStats
 import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoCalculationResult
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderFilter
+import com.vishalnursery.cashmemo.domain.model.OrderStats
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 
@@ -17,6 +22,7 @@ enum class AppDestination(val label: String) {
     EDITOR("Review"),
     HISTORY("History"),
     LEDGER("Ledger"),
+    NOTES("Notes"),
     SETTINGS("Settings")
 }
 
@@ -27,8 +33,13 @@ data class RateLink(
 
 data class EditorUiState(
     val editingMemoId: String? = null,
+    val memoType: MemoType = MemoType.CASH,
+    val orderStatus: OrderStatus = OrderStatus.PENDING,
+    val linkedMemoId: String = "",
+    val deliveringOrderId: String? = null,
     val memoNumber: String = "1001",
     val date: String = CashMemo.todayFormatted(),
+    val dueDate: String = "",
     val customerName: String = "",
     val customerMobile: String = "",
     val customerAddress: String = "",
@@ -49,15 +60,18 @@ data class EditorUiState(
     val sourceImageUri: String = "",
     val createdAt: Long = System.currentTimeMillis()
 ) {
+    val isOrder: Boolean
+        get() = memoType == MemoType.ORDER
+
     val calculation: MemoCalculationResult
         get() = MemoCalculationResult.compute(
             items = items,
             discount = discountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
             discountType = discountType,
             taxPercentage = taxPercentageText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
-            previousDues = previousDuesText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
+            previousDues = if (isOrder) 0.0 else (previousDuesText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0),
             paidAmount = paidAmountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0,
-            hasCustomPayment = hasCustomPayment
+            hasCustomPayment = hasCustomPayment || isOrder
         )
 }
 
@@ -118,7 +132,7 @@ sealed interface UpdateState {
 }
 
 data class CashmemoUiState(
-    val activeDestination: AppDestination = AppDestination.SCANNER,
+    val activeDestination: AppDestination = AppDestination.EDITOR,
     val canGoBack: Boolean = false,
     val updateState: UpdateState = UpdateState.Idle,
     val showStartupUpdateDialog: Boolean = false,
@@ -129,11 +143,17 @@ data class CashmemoUiState(
     val editor: EditorUiState = EditorUiState(),
     val allMemos: List<CashMemo> = emptyList(),
     val filteredMemos: List<CashMemo> = emptyList(),
+    val allOrders: List<CashMemo> = emptyList(),
+    val filteredOrders: List<CashMemo> = emptyList(),
+    val orderStats: OrderStats = OrderStats(),
+    val orderFilter: OrderFilter = OrderFilter.ALL,
+    val historyTab: Int = 0,
     val searchQuery: String = "",
     val selectedHistoryDate: String = "",
     val historyFilter: MemoFilter = MemoFilter.ALL,
     val dashboardStats: DashboardStats = DashboardStats(),
     val customers: List<CustomerProfile> = emptyList(),
+    val payments: List<CustomerPayment> = emptyList(),
     val plantRates: List<PlantRate> = emptyList(),
     val isSyncing: Boolean = false,
     val syncProgressText: String? = null,

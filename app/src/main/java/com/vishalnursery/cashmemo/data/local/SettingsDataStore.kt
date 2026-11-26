@@ -33,6 +33,7 @@ class SettingsDataStore(private val context: Context) {
         val CURRENCY_SYMBOL = stringPreferencesKey("currency_symbol")
         val MEMO_PREFIX = stringPreferencesKey("memo_prefix")
         val NEXT_MEMO_NUMBER = intPreferencesKey("next_memo_number")
+        val NEXT_ORDER_NUMBER = intPreferencesKey("next_order_number")
         val DEFAULT_TAX_PCT = doublePreferencesKey("default_tax_pct")
         val ENABLE_TAX = booleanPreferencesKey("enable_tax")
         val TAX_TYPE = stringPreferencesKey("tax_type")
@@ -66,6 +67,7 @@ class SettingsDataStore(private val context: Context) {
             currencySymbol = prefs[Keys.CURRENCY_SYMBOL] ?: defaults.currencySymbol,
             memoPrefix = prefs[Keys.MEMO_PREFIX] ?: defaults.memoPrefix,
             nextMemoNumber = prefs[Keys.NEXT_MEMO_NUMBER] ?: defaults.nextMemoNumber,
+            nextOrderNumber = prefs[Keys.NEXT_ORDER_NUMBER] ?: defaults.nextOrderNumber,
             defaultTaxPercentage = prefs[Keys.DEFAULT_TAX_PCT] ?: defaults.defaultTaxPercentage,
             enableTax = prefs[Keys.ENABLE_TAX] ?: defaults.enableTax,
             taxType = prefs[Keys.TAX_TYPE] ?: defaults.taxType,
@@ -110,6 +112,7 @@ class SettingsDataStore(private val context: Context) {
             prefs[Keys.CURRENCY_SYMBOL] = normalized.currencySymbol
             prefs[Keys.MEMO_PREFIX] = normalized.memoPrefix
             prefs[Keys.NEXT_MEMO_NUMBER] = normalized.nextMemoNumber
+            prefs[Keys.NEXT_ORDER_NUMBER] = normalized.nextOrderNumber
             prefs[Keys.DEFAULT_TAX_PCT] = normalized.defaultTaxPercentage
             prefs[Keys.ENABLE_TAX] = normalized.enableTax
             prefs[Keys.TAX_TYPE] = normalized.taxType
@@ -134,6 +137,16 @@ class SettingsDataStore(private val context: Context) {
             val current = prefs[Keys.NEXT_MEMO_NUMBER] ?: defaults.nextMemoNumber
             if (digits >= current) {
                 prefs[Keys.NEXT_MEMO_NUMBER] = digits + 1
+            }
+        }
+    }
+
+    suspend fun incrementNextOrderIfNeeded(usedOrderNumber: String) {
+        val digits = usedOrderNumber.filter { it.isDigit() }.toIntOrNull() ?: return
+        context.settingsDataStore.edit { prefs ->
+            val current = prefs[Keys.NEXT_ORDER_NUMBER] ?: defaults.nextOrderNumber
+            if (digits >= current) {
+                prefs[Keys.NEXT_ORDER_NUMBER] = digits + 1
             }
         }
     }

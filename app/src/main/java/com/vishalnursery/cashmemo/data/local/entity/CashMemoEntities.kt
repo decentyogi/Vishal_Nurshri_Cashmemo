@@ -34,6 +34,9 @@ data class CashMemoEntity(
     val sourceImageUri: String,
     @ColumnInfo(defaultValue = "0") val isWholesale: Boolean = false,
     val isSynced: Boolean,
+    @ColumnInfo(defaultValue = "'CASH'") val memoType: String = "CASH",
+    @ColumnInfo(defaultValue = "''") val orderStatus: String = "",
+    @ColumnInfo(defaultValue = "''") val linkedMemoId: String = "",
     val createdAt: Long,
     val updatedAt: Long
 )
@@ -90,4 +93,74 @@ data class PlantRateEntity(
     val retailPrice: Double,
     val wholesalePrice: Double,
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0L
+)
+
+@Entity(tableName = "payments")
+data class PaymentEntity(
+    @PrimaryKey val id: String,
+    val customerId: String,
+    val customerName: String,
+    val customerMobile: String,
+    val amount: Double,
+    val method: String,
+    val note: String,
+    val date: String,
+    val createdAt: Long
+)
+
+@Entity(
+    tableName = "payment_allocations",
+    foreignKeys = [
+        ForeignKey(
+            entity = PaymentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["paymentId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(value = ["paymentId"]),
+        Index(value = ["memoId"])
+    ]
+)
+data class PaymentAllocationEntity(
+    @PrimaryKey val id: String,
+    val paymentId: String,
+    val memoId: String,
+    val amount: Double
+)
+
+data class PaymentWithAllocations(
+    @Embedded val payment: PaymentEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "paymentId"
+    )
+    val allocations: List<PaymentAllocationEntity>
+)
+
+@Entity(tableName = "notes")
+data class NoteEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val body: String,
+    val customerId: String,
+    val customerName: String,
+    val isPinned: Boolean,
+    val createdAt: Long,
+    val updatedAt: Long
+)
+
+@Entity(tableName = "todos")
+data class TodoEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val dueDate: String,
+    val priority: String,
+    val customerId: String,
+    val customerName: String,
+    val isDone: Boolean,
+    val doneAt: Long,
+    val createdAt: Long,
+    val updatedAt: Long
 )

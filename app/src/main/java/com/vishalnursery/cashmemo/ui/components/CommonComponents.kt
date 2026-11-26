@@ -609,25 +609,29 @@ fun KpiSummaryPill(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
         color = backgroundColor
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
                 color = accentColor.copy(alpha = 0.85f),
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = value,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.ExtraBold,
                 color = accentColor,
-                maxLines = 1
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -799,7 +803,8 @@ object CashmemoPrintHelper {
 
     fun printCashMemo(context: Context, memo: CashMemo, businessSettings: BusinessSettings) {
         val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
-        val jobName = "CashMemo_${memo.memoNumber}"
+        val jobPrefix = if (memo.isOrder) "OrderMemo" else "CashMemo"
+        val jobName = "${jobPrefix}_${memo.memoNumber}"
 
         val adapter = object : PrintDocumentAdapter() {
             private var activeAttributes: PrintAttributes = PrintAttributes.Builder()

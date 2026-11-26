@@ -47,6 +47,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
@@ -62,6 +63,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -75,6 +77,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -93,6 +97,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -123,14 +128,18 @@ import androidx.core.content.FileProvider
 import com.vishalnursery.cashmemo.data.repository.PlantRateImportPolicy
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.ScanEngine
+import com.vishalnursery.cashmemo.domain.model.round2
 import com.vishalnursery.cashmemo.domain.util.AiPrompts
 import com.vishalnursery.cashmemo.domain.util.AiTextParser
+import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
+import com.vishalnursery.cashmemo.domain.util.PaymentAllocator
 import com.vishalnursery.cashmemo.domain.util.PlantNameMatcher
 import com.vishalnursery.cashmemo.ui.components.AiPasteSheet
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
@@ -147,6 +156,7 @@ import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 enum class PlantRateSortOrder(val label: String) {
     A_TO_Z("Name (A to Z)"),
@@ -160,6 +170,7 @@ enum class PlantRateSortOrder(val label: String) {
 fun CatalogLedgerScreen(
     customers: List<CustomerProfile>,
     memos: List<CashMemo>,
+    payments: List<CustomerPayment>,
     plantRates: List<PlantRate>,
     settings: BusinessSettings,
     rateScan: RateScanUiState,
@@ -176,7 +187,9 @@ fun CatalogLedgerScreen(
     onClearRateScanError: () -> Unit,
     onOpenSettings: () -> Unit,
     onSaveCustomer: (CustomerProfile) -> Unit,
-    onSettleCustomerDue: (String, Double, String) -> Unit,
+    onReceivePayment: (String, Double, String, String, String, Set<String>?) -> Unit,
+    onDeletePayment: (String) -> Unit,
+    onRecalculateCustomer: (String) -> Unit,
     onDeleteCustomer: (String) -> Unit,
     onCreateBillForCustomer: (CustomerProfile) -> Unit,
     onEditMemo: (CashMemo) -> Unit,
@@ -291,13 +304,18 @@ fun CatalogLedgerScreen(
         )
     }
 
-    settleTarget?.let { customer ->
+    settleTarget?.let { target ->
+        val customer = customers.firstOrNull { it.id == target.id } ?: target
+        val customerBills = remember(customer, memos) {
+            filterBillsForCustomer(customer, memos)
+        }
         SettleDueDialog(
             customer = customer,
+            customerBills = customerBills,
             currencySymbol = settings.currencySymbol,
             onDismiss = { settleTarget = null },
-            onConfirm = { amount, note ->
-                onSettleCustomerDue(customer.id, amount, note)
+            onConfirm = { amount, method, date, note, selectedMemoIds ->
+                onReceivePayment(customer.id, amount, method, date, note, selectedMemoIds)
                 settleTarget = null
             }
         )
@@ -404,20 +422,21 @@ fun CatalogLedgerScreen(
         val customer = customers.firstOrNull { it.id == id }
         if (customer != null) {
             val customerBills = remember(customer, memos) {
-                val cPhone = customer.phoneNumber.trim()
-                val cName = customer.name.trim()
-                memos.filter { m ->
-                    (cPhone.isNotEmpty() && m.customerMobile.trim() == cPhone) ||
-                        (cName.isNotEmpty() && m.customerName.trim().equals(cName, ignoreCase = true))
-                }.sortedByDescending { it.createdAt }
+                filterBillsForCustomer(customer, memos)
+            }
+            val customerPayments = remember(customer, payments) {
+                filterPaymentsForCustomer(customer, payments)
             }
             CustomerProfileHistoryDialog(
                 customer = customer,
                 bills = customerBills,
+                payments = customerPayments,
                 currencySymbol = settings.currencySymbol,
                 onDismiss = { selectedCustomerId = null },
                 onEditCustomer = { editingCustomer = customer },
                 onSettleDue = { settleTarget = customer },
+                onDeletePayment = onDeletePayment,
+                onRecalculateCustomer = { onRecalculateCustomer(customer.id) },
                 onCreateNewBill = {
                     selectedCustomerId = null
                     onCreateBillForCustomer(customer)
@@ -2133,7 +2152,7 @@ private fun CustomerCard(
                     IconButton(onClick = onSettle) {
                         Icon(
                             Icons.Default.Payments,
-                            contentDescription = "Settle Payment",
+                            contentDescription = "Receive Payment",
                             tint = NurseryColors.BotanicalGreen
                         )
                     }
@@ -2220,55 +2239,299 @@ private fun CustomerFormDialog(
     )
 }
 
+private fun filterBillsForCustomer(customer: CustomerProfile, memos: List<CashMemo>): List<CashMemo> {
+    val cPhone = customer.phoneNumber.trim()
+    val cName = customer.name.trim()
+    return memos.filter { m ->
+        CustomerMatcher.matches(m.customerName, m.customerMobile, cName, cPhone) ||
+            (cPhone.isNotEmpty() && m.customerMobile.trim() == cPhone) ||
+            (cName.isNotEmpty() && m.customerName.trim().equals(cName, ignoreCase = true))
+    }.sortedByDescending { it.createdAt }
+}
+
+private fun filterPaymentsForCustomer(customer: CustomerProfile, payments: List<CustomerPayment>): List<CustomerPayment> {
+    val cPhone = customer.phoneNumber.trim()
+    val cName = customer.name.trim()
+    return payments.filter { p ->
+        p.customerId == customer.id ||
+            CustomerMatcher.matches(p.customerName, p.customerMobile, cName, cPhone) ||
+            (cPhone.isNotEmpty() && p.customerMobile.trim() == cPhone) ||
+            (cName.isNotEmpty() && p.customerName.trim().equals(cName, ignoreCase = true))
+    }.sortedByDescending { it.createdAt }
+}
+
+private fun parseDdMmYyyyUtcMillis(text: String): Long? {
+    val trimmed = text.trim()
+    if (trimmed.isBlank()) return null
+    return runCatching {
+        SimpleDateFormat("dd/MM/yyyy", Locale.US).apply {
+            isLenient = false
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.parse(trimmed)?.time
+    }.getOrNull()
+}
+
+private fun formatUtcMillisDdMmYyyy(millis: Long): String {
+    return SimpleDateFormat("dd/MM/yyyy", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }.format(Date(millis))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettleDueDialog(
     customer: CustomerProfile,
+    customerBills: List<CashMemo>,
     currencySymbol: String,
     onDismiss: () -> Unit,
-    onConfirm: (Double, String) -> Unit
+    onConfirm: (Double, String, String, String, Set<String>?) -> Unit
 ) {
-    var amountText by remember { mutableStateOf(if (customer.outstandingBalance > 0.0) customer.outstandingBalance.toString() else "") }
-    var note by remember { mutableStateOf("Paid in Cash") }
-    val enteredAmount = amountText.toDoubleOrNull() ?: 0.0
-    val isValid = enteredAmount > 0.0
+    val maxDue = round2(customer.outstandingBalance)
+    val openBills = remember(customerBills) { PaymentAllocator.findOpenBills(customerBills) }
+    var selectedIds by remember(customer.id, openBills) {
+        mutableStateOf(openBills.map { it.id }.toSet())
+    }
+    var amountText by remember(customer.id) {
+        mutableStateOf(
+            if (maxDue > 0.009) {
+                if (maxDue % 1.0 == 0.0) maxDue.toLong().toString() else maxDue.toString()
+            } else ""
+        )
+    }
+    var method by remember(customer.id) { mutableStateOf("Cash") }
+    var dateText by remember(customer.id) { mutableStateOf(CashMemo.todayFormatted()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var note by remember(customer.id) { mutableStateOf("") }
+
+    val enteredAmount = amountText.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0
+    val exceedsDue = enteredAmount > maxDue + 0.009
+    val isValid = enteredAmount > 0.009 && !exceedsDue
+    val selectedBills = remember(openBills, selectedIds) { openBills.filter { it.id in selectedIds } }
+    val previewAllocation = remember(selectedBills, enteredAmount) {
+        PaymentAllocator.allocate(selectedBills, enteredAmount)
+    }
+    val remainingDue = round2((maxDue - enteredAmount).coerceAtLeast(0.0))
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = parseDdMmYyyyUtcMillis(dateText) ?: System.currentTimeMillis()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            dateText = formatUtcMillisDdMmYyyy(millis)
+                        }
+                        showDatePicker = false
+                    }
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Settle Customer Due", fontWeight = FontWeight.Bold) },
+        title = { Text("Receive Payment", fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text("Customer: ${customer.name}", fontWeight = FontWeight.SemiBold)
                 Text(
-                    text = "Current Due: ${IndianCurrencyFormatter.formatInr(customer.outstandingBalance, currencySymbol)}",
+                    text = "Outstanding Due: ${IndianCurrencyFormatter.formatInr(maxDue, currencySymbol)}",
                     color = NurseryColors.DueRed,
                     fontWeight = FontWeight.Bold
                 )
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },
-                    label = { Text("Paid Amount ($currencySymbol)") },
+                    label = { Text("Amount ($currencySymbol)") },
                     singleLine = true,
+                    isError = exceedsDue,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (exceedsDue) {
+                    Text(
+                        text = "Cannot exceed outstanding due (${IndianCurrencyFormatter.formatInr(maxDue, currencySymbol)})",
+                        color = NurseryColors.DueRed,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Cash", "Online").forEach { option ->
+                        val selected = method == option
+                        FilterChip(
+                            selected = selected,
+                            onClick = { method = option },
+                            label = {
+                                Text(
+                                    option,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = NurseryColors.BotanicalGreenLight,
+                                selectedLabelColor = NurseryColors.BotanicalGreen
+                            )
+                        )
+                    }
+                }
+
+                Surface(
+                    onClick = { showDatePicker = true },
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                    color = NurseryColors.PaperSurface,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Payment Date", style = MaterialTheme.typography.labelSmall, color = NurseryColors.MutedInk)
+                            Text(dateText, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        }
+                        Icon(
+                            Icons.Default.CalendarToday,
+                            contentDescription = "Pick Date",
+                            tint = NurseryColors.Maroon,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = note,
                     onValueChange = { note = it },
-                    label = { Text("Payment Note (e.g. Paid via UPI)") },
+                    label = { Text("Note (optional)") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                if (openBills.isNotEmpty()) {
+                    Text(
+                        text = "Open Bills (${selectedBills.size}/${openBills.size} selected)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = NurseryColors.Maroon
+                    )
+                    openBills.forEach { bill ->
+                        val checked = bill.id in selectedIds
+                        val share = previewAllocation.shareByMemoId[bill.id] ?: 0.0
+                        Surface(
+                            onClick = {
+                                selectedIds = if (checked) selectedIds - bill.id else selectedIds + bill.id
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (checked) NurseryColors.BotanicalGreenLight.copy(alpha = 0.35f) else NurseryColors.CreamBackground,
+                            border = BorderStroke(
+                                1.dp,
+                                if (checked) NurseryColors.BotanicalGreen.copy(alpha = 0.45f) else NurseryColors.OutlineSoft
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = checked,
+                                    onCheckedChange = { isChecked ->
+                                        selectedIds = if (isChecked) selectedIds + bill.id else selectedIds - bill.id
+                                    },
+                                    colors = CheckboxDefaults.colors(checkedColor = NurseryColors.BotanicalGreen)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("#${bill.memoNumber} • ${bill.date}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    val shareLabel = if (checked && share > 0.009) {
+                                        if (share >= bill.effectiveDue - 0.009) {
+                                            "Due ${IndianCurrencyFormatter.formatInr(bill.effectiveDue, currencySymbol)} -> Settled"
+                                        } else {
+                                            "Due ${IndianCurrencyFormatter.formatInr(bill.effectiveDue, currencySymbol)} -> -${IndianCurrencyFormatter.formatInr(share, currencySymbol)}"
+                                        }
+                                    } else {
+                                        "Due ${IndianCurrencyFormatter.formatInr(bill.effectiveDue, currencySymbol)}"
+                                    }
+                                    Text(
+                                        text = shareLabel,
+                                        fontSize = 11.sp,
+                                        color = if (checked && share > 0.009) NurseryColors.BotanicalGreen else NurseryColors.DueRed
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = NurseryColors.CreamBackground,
+                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "Remaining Due: ${IndianCurrencyFormatter.formatInr(remainingDue, currencySymbol)}",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (remainingDue > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen
+                        )
+                        if (openBills.isNotEmpty() && previewAllocation.totalAllocated > 0.009) {
+                            Text(
+                                text = "Allocated to ${previewAllocation.allocations.size} bill(s): ${IndianCurrencyFormatter.formatInr(previewAllocation.totalAllocated, currencySymbol)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NurseryColors.MutedInk
+                            )
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(enteredAmount, note.trim()) },
+                onClick = {
+                    onConfirm(
+                        round2(enteredAmount),
+                        method,
+                        dateText,
+                        note.trim(),
+                        if (openBills.isEmpty()) null else selectedIds
+                    )
+                },
                 enabled = isValid,
                 colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen)
             ) {
-                Text("Record Payment")
+                Text("Receive Payment", maxLines = 1, softWrap = false)
             }
         },
         dismissButton = {
@@ -2277,20 +2540,54 @@ private fun SettleDueDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CustomerProfileHistoryDialog(
     customer: CustomerProfile,
     bills: List<CashMemo>,
+    payments: List<CustomerPayment>,
     currencySymbol: String,
     onDismiss: () -> Unit,
     onEditCustomer: () -> Unit,
     onSettleDue: () -> Unit,
+    onDeletePayment: (String) -> Unit,
+    onRecalculateCustomer: () -> Unit,
     onCreateNewBill: () -> Unit,
     onEditBill: (CashMemo) -> Unit,
     onPrintBill: (CashMemo) -> Unit,
     onShareBillJpeg: (CashMemo) -> Unit,
     onShareBillPdf: (CashMemo) -> Unit
 ) {
+    var paymentsExpanded by remember(customer.id) { mutableStateOf(false) }
+    var pendingDeletePayment by remember { mutableStateOf<CustomerPayment?>(null) }
+    val billsById = remember(bills) { bills.associateBy { it.id } }
+
+    pendingDeletePayment?.let { payment ->
+        AlertDialog(
+            onDismissRequest = { pendingDeletePayment = null },
+            title = { Text("Delete Payment?") },
+            text = {
+                Text(
+                    "Remove ${IndianCurrencyFormatter.formatInr(payment.amount, currencySymbol)} (${payment.method} on ${payment.date}) and recalculate ${customer.name}'s balance?"
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeletePayment(payment.id)
+                        pendingDeletePayment = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.DueRed)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeletePayment = null }) { Text("Cancel") }
+            }
+        )
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -2331,39 +2628,76 @@ private fun CustomerProfileHistoryDialog(
                     border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column {
-                            Text("Outstanding Due", style = MaterialTheme.typography.labelSmall, color = NurseryColors.MutedInk)
-                            Text(
-                                text = IndianCurrencyFormatter.formatInr(customer.outstandingBalance, currencySymbol),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (customer.outstandingBalance > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (customer.outstandingBalance > 0.009) {
-                                Button(
-                                    onClick = onSettleDue,
-                                    colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen),
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("Outstanding Due", style = MaterialTheme.typography.labelSmall, color = NurseryColors.MutedInk)
+                                Text(
+                                    text = IndianCurrencyFormatter.formatInr(customer.outstandingBalance, currencySymbol),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (customer.outstandingBalance > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen
+                                )
+                            }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (customer.outstandingBalance > 0.009) {
+                                    Button(
+                                        onClick = onSettleDue,
+                                        colors = ButtonDefaults.buttonColors(containerColor = NurseryColors.BotanicalGreen),
+                                        shape = RoundedCornerShape(14.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("Receive Payment", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = onEditCustomer,
                                     shape = RoundedCornerShape(14.dp),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
-                                    Text("Settle Due", fontSize = 12.sp)
+                                    Text("Edit Profile", fontSize = 12.sp, maxLines = 1, softWrap = false)
                                 }
                             }
-                            OutlinedButton(
-                                onClick = onEditCustomer,
-                                shape = RoundedCornerShape(14.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(NurseryColors.OutlineSoft)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Billed: ${IndianCurrencyFormatter.formatInr(customer.totalPurchased, currencySymbol, false)}  •  Paid: ${IndianCurrencyFormatter.formatInr(customer.totalPaid, currencySymbol, false)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = NurseryColors.MutedInk,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            TextButton(
+                                onClick = onRecalculateCustomer,
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                modifier = Modifier.heightIn(min = 32.dp)
                             ) {
-                                Text("Edit Profile", fontSize = 12.sp)
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Recalculate from bills", fontSize = 11.sp, maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -2381,19 +2715,134 @@ private fun CustomerProfileHistoryDialog(
                     Text("Create New Bill for this Customer", fontWeight = FontWeight.Bold)
                 }
 
-                Text("Billing History (${bills.size})", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = NurseryColors.MutedInk)
-
-                // Bills list
-                if (bills.isEmpty()) {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text("No past cash memos found for this customer.", color = NurseryColors.MutedInk, style = MaterialTheme.typography.bodySmall)
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item(key = "payments_header") {
+                        Surface(
+                            onClick = { paymentsExpanded = !paymentsExpanded },
+                            shape = RoundedCornerShape(8.dp),
+                            color = NurseryColors.PaperSurface,
+                            border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 44.dp)
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Payments (${payments.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NurseryColors.Maroon
+                                )
+                                Icon(
+                                    imageVector = if (paymentsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (paymentsExpanded) "Collapse Payments" else "Expand Payments",
+                                    tint = NurseryColors.Maroon
+                                )
+                            }
+                        }
                     }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(bills, key = { it.id }) { bill ->
+
+                    if (paymentsExpanded) {
+                        if (payments.isEmpty()) {
+                            item(key = "payments_empty") {
+                                Text(
+                                    text = "No standalone payments recorded yet.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = NurseryColors.MutedInk,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            items(payments, key = { "pay_${it.id}" }) { payment ->
+                                val coveredMemos = payment.allocations.mapNotNull { alloc ->
+                                    billsById[alloc.memoId]?.let { "#${it.memoNumber}" }
+                                }.distinct()
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
+                                    border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                text = "${IndianCurrencyFormatter.formatInr(payment.amount, currencySymbol)}  •  ${payment.method}  •  ${payment.date}",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = NurseryColors.BotanicalGreen
+                                            )
+                                            if (coveredMemos.isNotEmpty()) {
+                                                Text(
+                                                    text = "Applied to: ${coveredMemos.joinToString(", ")}",
+                                                    fontSize = 11.sp,
+                                                    color = NurseryColors.MutedInk
+                                                )
+                                            }
+                                            if (payment.note.isNotBlank()) {
+                                                Text(
+                                                    text = payment.note,
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        IconButton(
+                                            onClick = { pendingDeletePayment = payment },
+                                            modifier = Modifier.size(40.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Delete Payment",
+                                                tint = NurseryColors.DueRed,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item(key = "bills_header") {
+                        Text(
+                            text = "Billing History (${bills.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = NurseryColors.MutedInk,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+
+                    if (bills.isEmpty()) {
+                        item(key = "bills_empty") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "No past cash memos found for this customer.",
+                                    color = NurseryColors.MutedInk,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    } else {
+                        items(bills, key = { "bill_${it.id}" }) { bill ->
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = NurseryColors.PaperSurface),
                                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
@@ -2409,9 +2858,9 @@ private fun CustomerProfileHistoryDialog(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("Memo #${bill.memoNumber} • ${bill.date}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                         Text(
-                                            text = "Total: ${IndianCurrencyFormatter.formatInr(bill.totalPayable, currencySymbol)} | Paid: ${IndianCurrencyFormatter.formatInr(bill.paidAmount, currencySymbol)} | Due: ${IndianCurrencyFormatter.formatInr(bill.balanceDue, currencySymbol)}",
+                                            text = "Total: ${IndianCurrencyFormatter.formatInr(bill.totalPayable, currencySymbol)} | Paid: ${IndianCurrencyFormatter.formatInr(bill.effectivePaid, currencySymbol)} | Due: ${IndianCurrencyFormatter.formatInr(bill.effectiveDue, currencySymbol)}",
                                             fontSize = 11.sp,
-                                            color = if (bill.balanceDue > 0.009) NurseryColors.DueRed else NurseryColors.BotanicalGreen
+                                            color = if (bill.hasEffectivePendingDue) NurseryColors.DueRed else NurseryColors.BotanicalGreen
                                         )
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically) {

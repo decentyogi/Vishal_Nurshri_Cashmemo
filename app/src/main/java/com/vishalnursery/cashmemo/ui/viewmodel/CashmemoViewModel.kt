@@ -17,11 +17,16 @@ import com.vishalnursery.cashmemo.domain.model.AiScanPreview
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DashboardStats
 import com.vishalnursery.cashmemo.domain.model.DiscountType
 import com.vishalnursery.cashmemo.domain.model.MemoFilter
 import com.vishalnursery.cashmemo.domain.model.MemoItem
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderFilter
+import com.vishalnursery.cashmemo.domain.model.OrderStats
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.model.RateNameStyle
 import com.vishalnursery.cashmemo.domain.model.ScanEngine
@@ -29,6 +34,7 @@ import com.vishalnursery.cashmemo.domain.model.TranslationMode
 import com.vishalnursery.cashmemo.domain.model.round2
 import com.vishalnursery.cashmemo.domain.util.AiTextParser
 import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
+import com.vishalnursery.cashmemo.domain.util.DateUtils
 import com.vishalnursery.cashmemo.domain.util.IndianCurrencyFormatter
 import com.vishalnursery.cashmemo.domain.util.ParsedRateRow
 import kotlinx.coroutines.Job
@@ -56,6 +62,18 @@ class CashmemoViewModel(
     private val searchQueryFlow = MutableStateFlow("")
     private val selectedHistoryDateFlow = MutableStateFlow("")
     private val historyFilterFlow = MutableStateFlow(MemoFilter.ALL)
+    private val orderFilterFlow = MutableStateFlow(OrderFilter.ALL)
+    private val historyTabFlow = MutableStateFlow(0)
+
+    private val historyControlsFlow = combine(
+        searchQueryFlow,
+        selectedHistoryDateFlow,
+        historyFilterFlow,
+        orderFilterFlow,
+        historyTabFlow
+    ) { query, date, filter, orderFilter, tab ->
+        HistoryControls(query, date, filter, orderFilter, tab)
+    }
 
     private val _uiState = MutableStateFlow(CashmemoUiState())
     val uiState: StateFlow<CashmemoUiState> = _uiState.asStateFlow()
@@ -73,28 +91,52 @@ class CashmemoViewModel(
         viewModelScope.launch {
             combine(
                 repository.memosFlow,
-                repository.customersFlow,
-                repository.plantRatesFlow,
-                repository.settingsFlow,
-                repository.settingsFlow.combine(searchQueryFlow) { s, q -> s to q }
-            ) { memos, customers, rates, settings, _ ->
-                val query = searchQueryFlow.value
-                val selectedDate = selectedHistoryDateFlow.value
-                val filter = historyFilterFlow.value
-                val filtered = filterMemos(memos, query, selectedDate, filter)
+                repository.ordersFlow,
+                repository.paymentsFlow,
+                combine(repository.customersFlow, repository.plantRatesFlow) { c, r -> c to r },
+                combine(repository.settingsFlow, historyControlsFlow) { s, h -> s to h }
+            ) { memos, orders, payments, custRates, settingsControls ->
+                val (customers, rates) = custRates
+                val (settings, controls) = settingsControls
+                val filtered = filterMemos(memos, controls.query, controls.selectedDate, controls.filter)
+                val filteredOrders = filterOrders(orders, controls.query, controls.selectedDate, controls.orderFilter)
                 val stats = DashboardStats(
                     totalMemos = memos.size,
-                    totalSales = round2(memos.sumOf { it.totalPayable }),
-                    totalCollected = round2(memos.sumOf { it.paidAmount }),
-                    totalPendingDues = round2(memos.sumOf { it.balanceDue })
+                    totalSales = round2(memos.sumOf { it.grandTotal }),
+                    totalCollected = round2(memos.sumOf { it.paidAmount } + payments.sumOf { it.amount }),
+                    totalPendingDues = round2(memos.sumOf { it.effectiveDue })
                 )
-                QuadrupleResult(memos, filtered, customers, rates, settings, query, selectedDate, filter, stats)
+                val activeOrders = orders.filter { it.orderStatus != OrderStatus.CANCELLED }
+                val pendingOrders = orders.filter { it.orderStatus == OrderStatus.PENDING }
+                val orderStats = OrderStats(
+                    totalOrders = orders.size,
+                    pendingCount = pendingOrders.size,
+                    advanceCollected = round2(activeOrders.sumOf { it.paidAmount }),
+                    pendingBalance = round2(pendingOrders.sumOf { it.balanceDue })
+                )
+                QuadrupleResult(
+                    memos = memos,
+                    orders = orders,
+                    payments = payments,
+                    filtered = filtered,
+                    filteredOrders = filteredOrders,
+                    customers = customers,
+                    rates = rates,
+                    settings = settings,
+                    query = controls.query,
+                    selectedDate = controls.selectedDate,
+                    filter = controls.filter,
+                    orderFilter = controls.orderFilter,
+                    historyTab = controls.historyTab,
+                    stats = stats,
+                    orderStats = orderStats
+                )
             }.collect { data ->
                 _uiState.update { current ->
                     val updatedEditor = if (!initializedEditorNumber && current.editor.editingMemoId == null) {
                         initializedEditorNumber = true
                         current.editor.copy(
-                            memoNumber = data.settings.nextMemoNumber.toString(),
+                            memoNumber = if (current.editor.isOrder) data.settings.nextOrderNumber.toString() else data.settings.nextMemoNumber.toString(),
                             taxPercentageText = if (data.settings.enableTax && data.settings.defaultTaxPercentage > 0) {
                                 formatEditableNumber(data.settings.defaultTaxPercentage)
                             } else ""
@@ -104,14 +146,20 @@ class CashmemoViewModel(
                     }
                     current.copy(
                         allMemos = data.memos,
+                        allOrders = data.orders,
+                        payments = data.payments,
                         filteredMemos = data.filtered,
+                        filteredOrders = data.filteredOrders,
                         customers = data.customers,
                         plantRates = data.rates,
                         settings = data.settings,
                         searchQuery = data.query,
                         selectedHistoryDate = data.selectedDate,
                         historyFilter = data.filter,
+                        orderFilter = data.orderFilter,
+                        historyTab = data.historyTab,
                         dashboardStats = data.stats,
+                        orderStats = data.orderStats,
                         editor = updatedEditor
                     )
                 }
@@ -179,7 +227,7 @@ class CashmemoViewModel(
 
     fun closeSettings() {
         if (!navigateBack()) {
-            go(AppDestination.SCANNER, replaceCurrent = true)
+            go(AppDestination.EDITOR, replaceCurrent = true)
         }
     }
 
@@ -594,6 +642,43 @@ class CashmemoViewModel(
 
     fun updateMemoNumber(value: String) = updateEditor { it.copy(memoNumber = value) }
     fun updateDate(value: String) = updateEditor { it.copy(date = value) }
+    fun updateDueDate(value: String) = updateEditor { it.copy(dueDate = value) }
+    fun updateOrderStatusInEditor(status: OrderStatus) = updateEditor { it.copy(orderStatus = status) }
+
+    fun toggleMemoType(type: MemoType) {
+        val settings = _uiState.value.settings
+        updateEditor { state ->
+            if (state.editingMemoId != null || state.memoType == type) return@updateEditor state
+            val isOrder = type == MemoType.ORDER
+            val defaultCashNo = settings.nextMemoNumber.toString()
+            val defaultOrderNo = settings.nextOrderNumber.toString()
+            val updatedNo = when {
+                isOrder && (state.memoNumber.isBlank() || state.memoNumber == defaultCashNo) -> defaultOrderNo
+                !isOrder && (state.memoNumber.isBlank() || state.memoNumber == defaultOrderNo) -> defaultCashNo
+                else -> state.memoNumber
+            }
+            val updatedMethod = if (isOrder && state.paymentMethod.equals("Credit", ignoreCase = true)) {
+                "Cash"
+            } else {
+                state.paymentMethod
+            }
+            val updatedNote = when {
+                isOrder && state.paymentStatusNote == "Carry Forward" -> ""
+                !isOrder && state.paymentStatusNote.isBlank() -> "Carry Forward"
+                else -> state.paymentStatusNote
+            }
+            state.copy(
+                memoType = type,
+                memoNumber = updatedNo,
+                previousDuesText = if (isOrder) "" else state.previousDuesText,
+                dueDate = if (isOrder) state.dueDate else "",
+                deliveringOrderId = if (isOrder) null else state.deliveringOrderId,
+                paymentMethod = updatedMethod,
+                paymentStatusNote = updatedNote
+            )
+        }
+    }
+
     fun updateCustomerName(value: String) = updateEditor { it.copy(customerName = value) }
     fun updateCustomerMobile(value: String) = updateEditor { it.copy(customerMobile = value) }
     fun updateCustomerAddress(value: String) = updateEditor { it.copy(customerAddress = value) }
@@ -604,7 +689,7 @@ class CashmemoViewModel(
                 customerName = customer.name,
                 customerMobile = customer.phoneNumber,
                 customerAddress = customer.address,
-                previousDuesText = if (customer.outstandingBalance > 0.0) formatEditableNumber(customer.outstandingBalance) else it.previousDuesText
+                previousDuesText = if (!it.isOrder && customer.outstandingBalance > 0.0) formatEditableNumber(customer.outstandingBalance) else it.previousDuesText
             )
         }
         checkAndAutoApplyRememberedTier(customer.name, customer.phoneNumber)
@@ -645,22 +730,20 @@ class CashmemoViewModel(
                     item
                 } else {
                     val plant = rates.firstOrNull { it.id == link.plantRateId }
-                    if (plant != null) {
+                    if (plant != null && plant.hasPriceForTier(enabled)) {
                         switchedCount++
-                        val newPrice = if (enabled) {
-                            if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
-                        } else plant.retailPrice
-                        item.copy(rate = newPrice)
+                        item.copy(rate = plant.priceForTier(enabled))
                     } else item
                 }
             } else {
                 val plant = rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-                if (plant != null && (item.rate == plant.retailPrice || (plant.wholesalePrice > 0.0 && item.rate == plant.wholesalePrice))) {
+                if (plant != null &&
+                    plant.hasPriceForTier(enabled) &&
+                    ((plant.retailPrice > 0.0 && item.rate == plant.retailPrice) ||
+                        (plant.wholesalePrice > 0.0 && item.rate == plant.wholesalePrice))
+                ) {
                     switchedCount++
-                    val newPrice = if (enabled) {
-                        if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
-                    } else plant.retailPrice
-                    item.copy(rate = newPrice)
+                    item.copy(rate = plant.priceForTier(enabled))
                 } else {
                     item
                 }
@@ -780,6 +863,19 @@ class CashmemoViewModel(
         }
     }
 
+    fun moveItemRow(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        updateEditor { state ->
+            if (fromIndex !in state.items.indices || toIndex !in state.items.indices) {
+                return@updateEditor state
+            }
+            val mutable = state.items.toMutableList()
+            val moved = mutable.removeAt(fromIndex)
+            mutable.add(toIndex, moved)
+            state.copy(items = mutable.mapIndexed { idx, item -> item.copy(serialNo = idx + 1) })
+        }
+    }
+
     fun updateItemDescription(index: Int, desc: String) {
         updateEditor { state ->
             val item = state.items.getOrNull(index) ?: return@updateEditor state
@@ -810,8 +906,12 @@ class CashmemoViewModel(
             val rates = _uiState.value.plantRates
             val plant = if (link != null) rates.firstOrNull { it.id == link.plantRateId }
                         else rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-            val tierPrice = if (plant != null) (if (state.isWholesaleMode) plant.wholesalePrice else plant.retailPrice) else null
-            val isCustom = tierPrice != null && rate != tierPrice
+            val hasTierPrice = plant?.hasPriceForTier(state.isWholesaleMode) == true
+            val isCustom = if (plant != null && hasTierPrice) {
+                kotlin.math.abs(rate - plant.priceForTier(state.isWholesaleMode)) > 0.01
+            } else {
+                false
+            }
 
             val updatedItem = item.copy(rate = rate)
             val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
@@ -830,10 +930,8 @@ class CashmemoViewModel(
             val rates = _uiState.value.plantRates
             val plant = if (link != null) rates.firstOrNull { it.id == link.plantRateId }
                         else rates.firstOrNull { it.name.trim().equals(item.description.trim(), ignoreCase = true) }
-            if (plant != null) {
-                val tierPrice = if (state.isWholesaleMode) {
-                    if (plant.wholesalePrice > 0.0) plant.wholesalePrice else plant.retailPrice
-                } else plant.retailPrice
+            if (plant != null && plant.hasPriceForTier(state.isWholesaleMode)) {
+                val tierPrice = plant.priceForTier(state.isWholesaleMode)
                 val updatedItem = item.copy(rate = tierPrice)
                 val updatedItems = state.items.mapIndexed { idx, itm -> if (idx == index) updatedItem else itm }
                 val updatedLinks = state.rateLinks + (item.id to RateLink(plantRateId = plant.id, customRate = false))
@@ -843,9 +941,7 @@ class CashmemoViewModel(
     }
 
     fun applyPlantRateSuggestion(index: Int, rateItem: PlantRate) {
-        val price = if (_uiState.value.editor.isWholesaleMode) {
-            if (rateItem.wholesalePrice > 0.0) rateItem.wholesalePrice else rateItem.retailPrice
-        } else rateItem.retailPrice
+        val price = rateItem.priceForTier(_uiState.value.editor.isWholesaleMode)
         updateEditor { state ->
             val item = state.items.getOrNull(index) ?: return@updateEditor state
             val updatedItem = item.copy(description = rateItem.name, rate = price)
@@ -890,10 +986,20 @@ class CashmemoViewModel(
             .ifEmpty { listOf(MemoItem(serialNo = 1, description = "Plant Item", quantity = 1.0, rate = calc.subtotal)) }
             .mapIndexed { idx, item -> item.copy(serialNo = idx + 1) }
 
+        val defaultNo = if (editor.isOrder) settings.nextOrderNumber.toString() else settings.nextMemoNumber.toString()
+        val statusNote = if (editor.isOrder) {
+            editor.paymentStatusNote.trim()
+        } else if (calc.balanceDue > 0.009) {
+            editor.paymentStatusNote.ifBlank { "Carry Forward" }
+        } else {
+            "Fully Paid"
+        }
+
         val memo = CashMemo(
             id = editor.editingMemoId ?: CashMemo.newMemoId(),
-            memoNumber = editor.memoNumber.ifBlank { settings.nextMemoNumber.toString() },
+            memoNumber = editor.memoNumber.ifBlank { defaultNo },
             date = editor.date.ifBlank { CashMemo.todayFormatted() },
+            dueDate = if (editor.isOrder) editor.dueDate.trim() else "",
             customerName = editor.customerName.trim(),
             customerMobile = editor.customerMobile.trim(),
             customerAddress = editor.customerAddress.trim(),
@@ -902,41 +1008,60 @@ class CashmemoViewModel(
             discountType = editor.discountType,
             taxPercentage = calc.taxRate,
             taxAmount = calc.taxAmount,
-            previousDues = calc.previousDues,
+            previousDues = if (editor.isOrder) 0.0 else calc.previousDues,
             subtotal = calc.subtotal,
             grandTotal = calc.grandTotal,
             paidAmount = calc.effectivePaid,
             balanceDue = calc.balanceDue,
             paymentMethod = editor.paymentMethod,
-            paymentStatusNote = if (calc.balanceDue > 0.009) editor.paymentStatusNote.ifBlank { "Carry Forward" } else "Fully Paid",
+            paymentStatusNote = statusNote,
             notes = editor.notes,
             rawOcrText = editor.rawOcrText,
             sourceImageUri = editor.sourceImageUri,
             isWholesale = editor.isWholesaleMode,
+            memoType = editor.memoType,
+            orderStatus = if (editor.isOrder) editor.orderStatus else OrderStatus.PENDING,
+            linkedMemoId = if (editor.isOrder) editor.linkedMemoId else "",
             createdAt = editor.createdAt,
             updatedAt = System.currentTimeMillis()
         )
 
+        val linkedOrderId = if (editor.isOrder) null else editor.deliveringOrderId
+
         viewModelScope.launch {
-            repository.saveMemo(memo)
+            repository.saveMemo(memo, linkedOrderId = linkedOrderId)
                 .onSuccess { saved ->
-                    _events.emit(UiEvent.ShowMessage("Memo #${saved.memoNumber} saved successfully"))
+                    val label = if (saved.isOrder) "Order" else "Memo"
+                    _events.emit(UiEvent.ShowMessage("$label #${saved.memoNumber} saved successfully"))
                     if (printAfterSave) {
                         _events.emit(UiEvent.TriggerPrint(saved, settings))
                     }
+                    val targetTab = if (saved.isOrder) 1 else 0
+                    historyTabFlow.value = targetTab
+                    val nextCashNo = if (!saved.isOrder) {
+                        val used = saved.memoNumber.filter { it.isDigit() }.toIntOrNull()
+                        if (used != null && used >= settings.nextMemoNumber) used + 1 else settings.nextMemoNumber
+                    } else {
+                        settings.nextMemoNumber
+                    }
                     go(AppDestination.HISTORY, replaceCurrent = true) {
                         it.copy(
+                            historyTab = targetTab,
                             editor = EditorUiState(
                                 editingMemoId = null,
-                                memoNumber = settings.nextMemoNumber.toString(),
+                                memoType = MemoType.CASH,
+                                memoNumber = nextCashNo.toString(),
                                 date = CashMemo.todayFormatted(),
+                                taxPercentageText = if (settings.enableTax && settings.defaultTaxPercentage > 0) {
+                                    formatEditableNumber(settings.defaultTaxPercentage)
+                                } else "",
                                 rateLinks = emptyMap()
                             )
                         )
                     }
                 }
                 .onFailure { err ->
-                    _events.emit(UiEvent.ShowMessage("Failed to save memo: ${err.localizedMessage}"))
+                    _events.emit(UiEvent.ShowMessage("Failed to save: ${err.localizedMessage}"))
                 }
         }
     }
@@ -951,10 +1076,20 @@ class CashmemoViewModel(
             .ifEmpty { listOf(MemoItem(serialNo = 1, description = "Plant Item", quantity = 1.0, rate = calc.subtotal)) }
             .mapIndexed { idx, item -> item.copy(serialNo = idx + 1) }
 
+        val defaultNo = if (editor.isOrder) settings.nextOrderNumber.toString() else settings.nextMemoNumber.toString()
+        val statusNote = if (editor.isOrder) {
+            editor.paymentStatusNote.trim()
+        } else if (calc.balanceDue > 0.009) {
+            editor.paymentStatusNote.ifBlank { "Carry Forward" }
+        } else {
+            "Fully Paid"
+        }
+
         return CashMemo(
             id = editor.editingMemoId ?: CashMemo.newMemoId(),
-            memoNumber = editor.memoNumber.ifBlank { settings.nextMemoNumber.toString() },
+            memoNumber = editor.memoNumber.ifBlank { defaultNo },
             date = editor.date.ifBlank { CashMemo.todayFormatted() },
+            dueDate = if (editor.isOrder) editor.dueDate.trim() else "",
             customerName = editor.customerName.trim(),
             customerMobile = editor.customerMobile.trim(),
             customerAddress = editor.customerAddress.trim(),
@@ -963,17 +1098,20 @@ class CashmemoViewModel(
             discountType = editor.discountType,
             taxPercentage = calc.taxRate,
             taxAmount = calc.taxAmount,
-            previousDues = calc.previousDues,
+            previousDues = if (editor.isOrder) 0.0 else calc.previousDues,
             subtotal = calc.subtotal,
             grandTotal = calc.grandTotal,
             paidAmount = calc.effectivePaid,
             balanceDue = calc.balanceDue,
             paymentMethod = editor.paymentMethod,
-            paymentStatusNote = if (calc.balanceDue > 0.009) editor.paymentStatusNote.ifBlank { "Carry Forward" } else "Fully Paid",
+            paymentStatusNote = statusNote,
             notes = editor.notes,
             rawOcrText = editor.rawOcrText,
             sourceImageUri = editor.sourceImageUri,
             isWholesale = editor.isWholesaleMode,
+            memoType = editor.memoType,
+            orderStatus = if (editor.isOrder) editor.orderStatus else OrderStatus.PENDING,
+            linkedMemoId = if (editor.isOrder) editor.linkedMemoId else "",
             createdAt = editor.createdAt,
             updatedAt = System.currentTimeMillis()
         )
@@ -1031,6 +1169,16 @@ class CashmemoViewModel(
         _uiState.update { it.copy(historyFilter = filter) }
     }
 
+    fun updateOrderFilter(filter: OrderFilter) {
+        orderFilterFlow.value = filter
+        _uiState.update { it.copy(orderFilter = filter) }
+    }
+
+    fun setHistoryTab(tab: Int) {
+        historyTabFlow.value = tab
+        _uiState.update { it.copy(historyTab = tab) }
+    }
+
     fun editMemo(memo: CashMemo) {
         go(AppDestination.EDITOR) {
             it.copy(
@@ -1040,11 +1188,64 @@ class CashmemoViewModel(
     }
 
     fun duplicateMemo(memo: CashMemo) {
-        val nextNum = _uiState.value.settings.nextMemoNumber.toString()
+        val nextNum = if (memo.isOrder) {
+            _uiState.value.settings.nextOrderNumber.toString()
+        } else {
+            _uiState.value.settings.nextMemoNumber.toString()
+        }
         go(AppDestination.EDITOR) {
             it.copy(
                 editor = memo.toEditorState(isNewDraft = true).copy(memoNumber = nextNum)
             )
+        }
+    }
+
+    fun startDeliverOrder(order: CashMemo) {
+        val settings = _uiState.value.settings
+        val hasAdvance = order.paidAmount > 0.009
+        go(AppDestination.EDITOR) {
+            it.copy(
+                editor = EditorUiState(
+                    editingMemoId = null,
+                    memoType = MemoType.CASH,
+                    orderStatus = OrderStatus.PENDING,
+                    linkedMemoId = "",
+                    deliveringOrderId = order.id,
+                    memoNumber = settings.nextMemoNumber.toString(),
+                    date = CashMemo.todayFormatted(),
+                    dueDate = "",
+                    customerName = order.customerName,
+                    customerMobile = order.customerMobile,
+                    customerAddress = order.customerAddress,
+                    items = if (order.items.isNotEmpty()) {
+                        order.items.mapIndexed { idx, item -> item.copy(id = MemoItem().id, serialNo = idx + 1) }
+                    } else {
+                        listOf(MemoItem(serialNo = 1))
+                    },
+                    discountText = if (order.discount > 0.0) formatEditableNumber(order.discount) else "",
+                    discountType = order.discountType,
+                    taxPercentageText = if (order.taxPercentage > 0.0) formatEditableNumber(order.taxPercentage) else "",
+                    previousDuesText = "",
+                    paidAmountText = if (hasAdvance) formatEditableNumber(order.paidAmount) else "",
+                    hasCustomPayment = hasAdvance,
+                    paymentMethod = if (order.paymentMethod.equals("Credit", ignoreCase = true)) "Cash" else order.paymentMethod.ifBlank { "Cash" },
+                    paymentStatusNote = "Carry Forward",
+                    notes = order.notes,
+                    isWholesaleMode = order.isWholesale,
+                    tierTouchedByUser = true
+                )
+            )
+        }
+        viewModelScope.launch {
+            _events.emit(UiEvent.ShowMessage("Converting Order #${order.memoNumber} to Cash Memo"))
+        }
+    }
+
+    fun updateOrderStatus(orderId: String, status: OrderStatus) {
+        viewModelScope.launch {
+            repository.updateOrderStatus(orderId, status)
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Order marked ${status.label}")) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Update failed: ${err.localizedMessage}")) }
         }
     }
 
@@ -1056,43 +1257,55 @@ class CashmemoViewModel(
         }
     }
 
+    private fun CashMemo.withEffectiveAmounts(): CashMemo = copy(
+        paidAmount = effectivePaid,
+        balanceDue = effectiveDue,
+        paymentStatusNote = if (hasEffectivePendingDue) paymentStatusNote else "Fully Paid"
+    )
+
     fun printMemo(memo: CashMemo) {
         viewModelScope.launch {
-            _events.emit(UiEvent.TriggerPrint(memo, _uiState.value.settings))
+            _events.emit(UiEvent.TriggerPrint(memo.withEffectiveAmounts(), _uiState.value.settings))
         }
     }
 
     fun shareMemoAsJpeg(memo: CashMemo) {
         viewModelScope.launch {
-            _events.emit(UiEvent.ShareMemoImages(memo, _uiState.value.settings))
+            _events.emit(UiEvent.ShareMemoImages(memo.withEffectiveAmounts(), _uiState.value.settings))
         }
     }
 
     fun shareMemoAsPdf(memo: CashMemo) {
         viewModelScope.launch {
-            _events.emit(UiEvent.ShareMemoPdf(memo, _uiState.value.settings))
+            _events.emit(UiEvent.ShareMemoPdf(memo.withEffectiveAmounts(), _uiState.value.settings))
         }
     }
 
     fun shareMemoSummary(memo: CashMemo) {
+        val effective = memo.withEffectiveAmounts()
         val settings = _uiState.value.settings
         val summary = buildString {
             appendLine("${settings.shopNameHindi} (${settings.shopNameEnglish})")
-            appendLine("Memo #${memo.memoNumber} | Date: ${memo.date}")
-            if (memo.customerName.isNotBlank()) appendLine("Customer: ${memo.customerName}")
+            val docPrefix = if (effective.isOrder) "Order" else "Memo"
+            appendLine("$docPrefix #${effective.memoNumber} | Date: ${effective.date}")
+            if (effective.isOrder && effective.dueDate.isNotBlank()) {
+                appendLine("Expected Delivery: ${effective.dueDate}")
+            }
+            if (effective.customerName.isNotBlank()) appendLine("Customer: ${effective.customerName}")
             appendLine("--------------------------------")
-            for (item in memo.items) {
+            for (item in effective.items) {
                 appendLine("${item.description} x ${item.quantity} = ${IndianCurrencyFormatter.formatInr(item.amount, settings.currencySymbol)}")
             }
             appendLine("--------------------------------")
-            appendLine("Total: ${IndianCurrencyFormatter.formatInr(memo.totalPayable, settings.currencySymbol)}")
-            appendLine("Paid: ${IndianCurrencyFormatter.formatInr(memo.paidAmount, settings.currencySymbol)}")
-            appendLine("Balance: ${IndianCurrencyFormatter.formatInr(memo.balanceDue, settings.currencySymbol)}")
+            appendLine("Total: ${IndianCurrencyFormatter.formatInr(effective.totalPayable, settings.currencySymbol)}")
+            appendLine("${if (effective.isOrder) "Advance Paid" else "Paid"}: ${IndianCurrencyFormatter.formatInr(effective.paidAmount, settings.currencySymbol)}")
+            appendLine("Balance: ${IndianCurrencyFormatter.formatInr(effective.balanceDue, settings.currencySymbol)}")
         }
         viewModelScope.launch {
+            val filePrefix = if (effective.isOrder) "OrderMemo" else "Cashmemo"
             _events.emit(
                 UiEvent.ShareFile(
-                    fileName = "Cashmemo_${memo.memoNumber}.txt",
+                    fileName = "${filePrefix}_${effective.memoNumber}.txt",
                     mimeType = "text/plain",
                     content = summary
                 )
@@ -1181,16 +1394,59 @@ class CashmemoViewModel(
         }
     }
 
-    fun settleCustomerDue(customerId: String, amount: Double, promiseNote: String) {
+    fun receiveCustomerPayment(
+        customerId: String,
+        amount: Double,
+        method: String,
+        date: String,
+        note: String,
+        selectedMemoIds: Set<String>?
+    ) {
         viewModelScope.launch {
-            runCatching { repository.recordCustomerPayment(customerId, amount, promiseNote) }
-                .onSuccess { _events.emit(UiEvent.ShowMessage("Payment recorded")) }
-                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Payment failed: ${err.localizedMessage}")) }
+            repository.recordCustomerPayment(
+                customerId = customerId,
+                amountPaid = amount,
+                promiseNote = note,
+                method = method,
+                date = date,
+                selectedMemoIds = selectedMemoIds
+            ).onSuccess {
+                _events.emit(UiEvent.ShowMessage("Payment recorded"))
+            }.onFailure { err ->
+                _events.emit(UiEvent.ShowMessage("Payment failed: ${err.localizedMessage}"))
+            }
         }
+    }
+
+    fun settleCustomerDue(customerId: String, amount: Double, promiseNote: String) {
+        receiveCustomerPayment(
+            customerId = customerId,
+            amount = amount,
+            method = "Cash",
+            date = CashMemo.todayFormatted(),
+            note = promiseNote,
+            selectedMemoIds = null
+        )
     }
 
     fun settleCustomerDue(customer: CustomerProfile, amount: Double, promiseNote: String) {
         settleCustomerDue(customer.id, amount, promiseNote)
+    }
+
+    fun deleteCustomerPayment(paymentId: String) {
+        viewModelScope.launch {
+            repository.deletePayment(paymentId)
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Payment deleted and balance updated")) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Delete failed: ${err.localizedMessage}")) }
+        }
+    }
+
+    fun recalculateCustomerBalance(customerId: String) {
+        viewModelScope.launch {
+            repository.recalculateCustomerFromBills(customerId)
+                .onSuccess { _events.emit(UiEvent.ShowMessage("Customer balance recalculated from bills")) }
+                .onFailure { err -> _events.emit(UiEvent.ShowMessage("Recalculation failed: ${err.localizedMessage}")) }
+        }
     }
 
     fun deleteCustomer(id: String) {
@@ -1200,7 +1456,12 @@ class CashmemoViewModel(
     fun savePlantRate(rate: PlantRate) {
         viewModelScope.launch {
             repository.savePlantRate(rate)
-            _events.emit(UiEvent.ShowMessage("Saved plant rate: ${rate.name}"))
+            val tierSuffix = when {
+                rate.wholesalePrice > 0.0 && rate.retailPrice == 0.0 -> " (Wholesale)"
+                rate.retailPrice > 0.0 && rate.wholesalePrice == 0.0 -> " (Retail)"
+                else -> ""
+            }
+            _events.emit(UiEvent.ShowMessage("Saved plant rate: ${rate.name}$tierSuffix"))
         }
     }
 
@@ -1565,39 +1826,78 @@ class CashmemoViewModel(
         }
     }
 
+    private fun matchesQueryAndDate(
+        memo: CashMemo,
+        query: String,
+        selectedDate: String
+    ): Boolean {
+        val q = query.trim().lowercase()
+        val d = selectedDate.trim()
+        if (d.isNotEmpty() && memo.date.trim() != d) return false
+        if (q.isEmpty()) return true
+        return memo.memoNumber.lowercase().contains(q) ||
+            memo.customerName.lowercase().contains(q) ||
+            memo.customerMobile.lowercase().contains(q) ||
+            memo.customerAddress.lowercase().contains(q) ||
+            memo.date.lowercase().contains(q) ||
+            memo.dueDate.lowercase().contains(q) ||
+            memo.items.any { it.description.lowercase().contains(q) }
+    }
+
     private fun filterMemos(
         memos: List<CashMemo>,
         query: String,
         selectedDate: String,
         filter: MemoFilter
     ): List<CashMemo> {
-        val q = query.trim().lowercase()
-        val d = selectedDate.trim()
         return memos.filter { memo ->
             val matchesFilter = when (filter) {
                 MemoFilter.ALL -> true
-                MemoFilter.PENDING_DUE -> memo.hasPendingDue
-                MemoFilter.PAID -> !memo.hasPendingDue
+                MemoFilter.PENDING_DUE -> memo.hasEffectivePendingDue
+                MemoFilter.PAID -> !memo.hasEffectivePendingDue
             }
-            if (!matchesFilter) return@filter false
-            if (d.isNotEmpty() && memo.date.trim() != d) return@filter false
-            if (q.isEmpty()) return@filter true
-
-            memo.memoNumber.lowercase().contains(q) ||
-                memo.customerName.lowercase().contains(q) ||
-                memo.customerMobile.lowercase().contains(q) ||
-                memo.customerAddress.lowercase().contains(q) ||
-                memo.date.lowercase().contains(q) ||
-                memo.items.any { it.description.lowercase().contains(q) }
+            matchesFilter && matchesQueryAndDate(memo, query, selectedDate)
         }
     }
 
+    private fun filterOrders(
+        orders: List<CashMemo>,
+        query: String,
+        selectedDate: String,
+        filter: OrderFilter
+    ): List<CashMemo> {
+        return orders.filter { order ->
+            val matchesFilter = when (filter) {
+                OrderFilter.ALL -> true
+                OrderFilter.PENDING -> order.orderStatus == OrderStatus.PENDING
+                OrderFilter.DELIVERED -> order.orderStatus == OrderStatus.DELIVERED
+                OrderFilter.CANCELLED -> order.orderStatus == OrderStatus.CANCELLED
+            }
+            matchesFilter && matchesQueryAndDate(order, query, selectedDate)
+        }.sortedWith(
+            compareBy<CashMemo> {
+                when (it.orderStatus) {
+                    OrderStatus.PENDING -> 0
+                    OrderStatus.DELIVERED -> 1
+                    OrderStatus.CANCELLED -> 2
+                }
+            }.thenBy {
+                if (it.orderStatus == OrderStatus.PENDING) DateUtils.dateSortKey(it.dueDate) else 0L
+            }.thenByDescending { it.createdAt }
+        )
+    }
+
     private fun CashMemo.toEditorState(isNewDraft: Boolean): EditorUiState {
-        val hasCustom = balanceDue > 0.009 || (paidAmount > 0.0 && kotlin.math.abs(paidAmount - totalPayable) > 0.01)
+        val hasCustom = isOrder || balanceDue > 0.009 || (paidAmount > 0.0 && kotlin.math.abs(paidAmount - totalPayable) > 0.01)
         return EditorUiState(
             editingMemoId = if (isNewDraft) null else id,
+            memoType = memoType,
+            orderStatus = if (isNewDraft) OrderStatus.PENDING else orderStatus,
+            linkedMemoId = if (isNewDraft) "" else linkedMemoId,
+            deliveringOrderId = null,
             memoNumber = memoNumber,
             date = date,
+            dueDate = dueDate,
             customerName = customerName,
             customerMobile = customerMobile,
             customerAddress = customerAddress,
@@ -1605,8 +1905,8 @@ class CashmemoViewModel(
             discountText = if (discount > 0.0) formatEditableNumber(discount) else "",
             discountType = discountType,
             taxPercentageText = if (taxPercentage > 0.0) formatEditableNumber(taxPercentage) else "",
-            previousDuesText = if (previousDues > 0.0) formatEditableNumber(previousDues) else "",
-            paidAmountText = if (hasCustom) formatEditableNumber(paidAmount) else "",
+            previousDuesText = if (!isOrder && previousDues > 0.0) formatEditableNumber(previousDues) else "",
+            paidAmountText = if (hasCustom && paidAmount > 0.009) formatEditableNumber(paidAmount) else if (!isOrder && hasCustom) formatEditableNumber(paidAmount) else "",
             hasCustomPayment = hasCustom,
             paymentMethod = paymentMethod,
             paymentStatusNote = paymentStatusNote,
@@ -1625,16 +1925,30 @@ class CashmemoViewModel(
         return if (clean % 1.0 == 0.0) clean.toLong().toString() else clean.toString()
     }
 
+    private data class HistoryControls(
+        val query: String,
+        val selectedDate: String,
+        val filter: MemoFilter,
+        val orderFilter: OrderFilter,
+        val historyTab: Int
+    )
+
     private data class QuadrupleResult(
         val memos: List<CashMemo>,
+        val orders: List<CashMemo>,
+        val payments: List<CustomerPayment>,
         val filtered: List<CashMemo>,
+        val filteredOrders: List<CashMemo>,
         val customers: List<CustomerProfile>,
         val rates: List<PlantRate>,
         val settings: BusinessSettings,
         val query: String,
         val selectedDate: String,
         val filter: MemoFilter,
-        val stats: DashboardStats
+        val orderFilter: OrderFilter,
+        val historyTab: Int,
+        val stats: DashboardStats,
+        val orderStats: OrderStats
     )
 
     class Factory(

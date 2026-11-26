@@ -10,13 +10,20 @@ import com.vishalnursery.cashmemo.data.remote.dto.BackupPayloadDto
 import com.vishalnursery.cashmemo.data.remote.dto.PaymentRequestDto
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
+import com.vishalnursery.cashmemo.domain.model.PaymentAllocation
 import com.vishalnursery.cashmemo.domain.model.PlantRate
 import com.vishalnursery.cashmemo.domain.model.round2
+import com.vishalnursery.cashmemo.domain.util.CustomerLedgerCalculator
 import com.vishalnursery.cashmemo.domain.util.CustomerMatcher
+import com.vishalnursery.cashmemo.domain.util.PaymentAllocator
 import com.vishalnursery.cashmemo.domain.util.PlantNameMatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -48,12 +55,28 @@ class CashmemoRepository(
     private val memoDao = database.memoDao()
     private val customerDao = database.customerDao()
     private val rateDao = database.plantRateDao()
+    private val paymentDao = database.paymentDao()
+    private val noteDao = database.noteDao()
+    private val todoDao = database.todoDao()
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
     val syncManager: SyncManager = SyncManager(context, database, settingsDataStore)
 
-    val memosFlow: Flow<List<CashMemo>> =
-        memoDao.observeAllMemos().map { list -> list.map { it.toDomain() } }
+    val memosFlow: Flow<List<CashMemo>> = combine(
+        memoDao.observeAllMemos(),
+        paymentDao.observeAllAllocations()
+    ) { memos, allocations ->
+        val laterPaidByMemo = allocations
+            .groupBy { it.memoId }
+            .mapValues { (_, list) -> round2(list.sumOf { it.amount }) }
+        memos.map { it.toDomain(laterPaid = laterPaidByMemo[it.memo.id] ?: 0.0) }
+    }
+
+    val paymentsFlow: Flow<List<CustomerPayment>> =
+        paymentDao.observeAllPayments().map { list -> list.map { it.toDomain() } }
+
+    val ordersFlow: Flow<List<CashMemo>> =
+        memoDao.observeOrders().map { list -> list.map { it.toDomain() } }
 
     val customersFlow: Flow<List<CustomerProfile>> =
         customerDao.observeAllCustomers().map { list -> list.map { it.toDomain() } }
@@ -78,10 +101,22 @@ class CashmemoRepository(
         }
     }
 
-    suspend fun saveMemo(memo: CashMemo): Result<CashMemo> = withContext(Dispatchers.IO) {
+    suspend fun saveMemo(memo: CashMemo, linkedOrderId: String? = null): Result<CashMemo> = withContext(Dispatchers.IO) {
         runCatching {
             val now = System.currentTimeMillis()
+            if (memo.isOrder) {
+                val cleanOrder = memo.copy(
+                    memoType = MemoType.ORDER,
+                    previousDues = 0.0,
+                    updatedAt = now
+                )
+                memoDao.upsertMemoWithItems(cleanOrder.toEntity(), cleanOrder.toItemEntities())
+                settingsDataStore.incrementNextOrderIfNeeded(cleanOrder.memoNumber)
+                return@runCatching cleanOrder
+            }
+
             val cleanMemo = memo.copy(
+                memoType = MemoType.CASH,
                 updatedAt = now,
                 paymentStatusNote = if (memo.balanceDue > 0.009) {
                     memo.paymentStatusNote.ifBlank { "Carry Forward" }
@@ -93,13 +128,25 @@ class CashmemoRepository(
 
             memoDao.upsertMemoWithItems(cleanMemo.toEntity(), cleanMemo.toItemEntities())
             settingsDataStore.incrementNextMemoIfNeeded(cleanMemo.memoNumber)
-            if (previousVersion == null) {
-                syncCustomerFromBillLocally(cleanMemo)
-            } else {
-                reconcileCustomerFromMemos(cleanMemo.customerName, cleanMemo.customerMobile, cleanMemo.customerAddress)
-                if (!sameCustomerKey(previousVersion.customerName, previousVersion.customerMobile, cleanMemo.customerName, cleanMemo.customerMobile)) {
-                    reconcileCustomerFromMemos(previousVersion.customerName, previousVersion.customerMobile, previousVersion.customerAddress)
+
+            if (!linkedOrderId.isNullOrBlank()) {
+                val orderEntity = memoDao.getMemoById(linkedOrderId)?.memo
+                if (orderEntity != null && orderEntity.memoType == MemoType.ORDER.wireValue) {
+                    memoDao.insertMemo(
+                        orderEntity.copy(
+                            orderStatus = OrderStatus.DELIVERED.wireValue,
+                            linkedMemoId = cleanMemo.id,
+                            updatedAt = now
+                        )
+                    )
                 }
+            }
+
+            reconcileCustomerFromMemos(cleanMemo.customerName, cleanMemo.customerMobile, cleanMemo.customerAddress)
+            if (previousVersion != null &&
+                !sameCustomerKey(previousVersion.customerName, previousVersion.customerMobile, cleanMemo.customerName, cleanMemo.customerMobile)
+            ) {
+                reconcileCustomerFromMemos(previousVersion.customerName, previousVersion.customerMobile, previousVersion.customerAddress)
             }
 
             val settings = settingsDataStore.getSettingsOnce()
@@ -117,8 +164,38 @@ class CashmemoRepository(
         }
     }
 
+    suspend fun updateOrderStatus(orderId: String, status: OrderStatus): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val entity = memoDao.getMemoById(orderId)?.memo ?: error("Order not found")
+            val updated = entity.copy(
+                orderStatus = status.wireValue,
+                linkedMemoId = if (status == OrderStatus.PENDING) "" else entity.linkedMemoId,
+                updatedAt = System.currentTimeMillis()
+            )
+            memoDao.insertMemo(updated)
+        }
+    }
+
     suspend fun deleteMemo(id: String) = withContext(Dispatchers.IO) {
         val existingMemo = memoDao.getMemoById(id)?.toDomain()
+        if (existingMemo != null && existingMemo.isOrder) {
+            memoDao.deleteMemoById(id)
+            return@withContext
+        }
+        val linkedOrders = memoDao.getOrdersByLinkedMemoId(id)
+        if (linkedOrders.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            for (ord in linkedOrders) {
+                memoDao.insertMemo(
+                    ord.memo.copy(
+                        orderStatus = OrderStatus.PENDING.wireValue,
+                        linkedMemoId = "",
+                        updatedAt = now
+                    )
+                )
+            }
+        }
+        paymentDao.deleteAllocationsForMemo(id)
         memoDao.deleteMemoById(id)
         if (existingMemo != null) {
             reconcileCustomerFromMemos(existingMemo.customerName, existingMemo.customerMobile, existingMemo.customerAddress)
@@ -140,25 +217,84 @@ class CashmemoRepository(
     suspend fun recordCustomerPayment(
         customerId: String,
         amountPaid: Double,
-        promiseNote: String = "Carry Forward"
-    ) = withContext(Dispatchers.IO) {
-        val entity = customerDao.getCustomerById(customerId) ?: return@withContext
-        val oldBalance = entity.outstandingBalance
-        val newBalance = round2(max(0.0, oldBalance - amountPaid))
-        val updated = entity.copy(
-            outstandingBalance = newBalance,
-            totalPaid = round2(entity.totalPaid + amountPaid),
-            lastPromiseNote = if (newBalance <= 0.009) "Fully Paid" else promiseNote.ifBlank { "Carry Forward" },
-            lastTransactionAt = System.currentTimeMillis()
-        )
-        customerDao.upsertCustomer(updated)
+        promiseNote: String = "Carry Forward",
+        method: String = "Cash",
+        date: String = CashMemo.todayFormatted(),
+        selectedMemoIds: Set<String>? = null
+    ): Result<CustomerPayment> = withContext(Dispatchers.IO) {
+        runCatching {
+            val customer = customerDao.getCustomerById(customerId)?.toDomain()
+                ?: error("Customer not found")
+            val cleanAmount = round2(max(0.0, amountPaid))
+            require(cleanAmount > 0.009) { "Payment amount must be greater than zero" }
 
-        val settings = settingsDataStore.getSettingsOnce()
-        if (settings.autoSyncEnabled && settings.serverBaseUrl.isNotBlank()) {
-            runCatching {
-                DynamicBaseUrlClient.getService(settings.serverBaseUrl)
-                    ?.recordCustomerPayment(customerId, PaymentRequestDto(amountPaid, promiseNote))
+            val laterPaidByMemo = paymentDao.getAllAllocationsOnce()
+                .groupBy { it.memoId }
+                .mapValues { (_, list) -> round2(list.sumOf { it.amount }) }
+            val customerMemos = memoDao.getAllMemosOnce()
+                .map { it.toDomain(laterPaid = laterPaidByMemo[it.memo.id] ?: 0.0) }
+                .filter { matchesCustomer(it.customerName, it.customerMobile, customer) }
+            val openBills = PaymentAllocator.findOpenBills(customerMemos)
+            val targetBills = if (selectedMemoIds != null) {
+                openBills.filter { it.id in selectedMemoIds }
+            } else {
+                openBills
             }
+            val allocResult = PaymentAllocator.allocate(targetBills, cleanAmount)
+            val now = System.currentTimeMillis()
+            val paymentId = "pay_${now}_${java.util.UUID.randomUUID().toString().take(6)}"
+            val payment = CustomerPayment(
+                id = paymentId,
+                customerId = customer.id,
+                customerName = customer.name,
+                customerMobile = customer.phoneNumber,
+                amount = cleanAmount,
+                method = method.ifBlank { "Cash" },
+                note = promiseNote.trim(),
+                date = date.ifBlank { CashMemo.todayFormatted() },
+                createdAt = now,
+                allocations = allocResult.allocations.mapIndexed { idx, share ->
+                    PaymentAllocation(
+                        id = "alloc_${now}_${idx}_${java.util.UUID.randomUUID().toString().take(6)}",
+                        paymentId = paymentId,
+                        memoId = share.memoId,
+                        amount = share.amount
+                    )
+                }
+            )
+            paymentDao.upsertPaymentWithAllocations(payment.toEntity(), payment.toAllocationEntities())
+            reconcileMatchedCustomer(customer, customer.name, customer.phoneNumber, customer.address)
+
+            val settings = settingsDataStore.getSettingsOnce()
+            if (settings.autoSyncEnabled && settings.serverBaseUrl.isNotBlank()) {
+                runCatching {
+                    DynamicBaseUrlClient.getService(settings.serverBaseUrl)
+                        ?.recordCustomerPayment(customerId, PaymentRequestDto(cleanAmount, promiseNote))
+                }
+            }
+            payment
+        }
+    }
+
+    suspend fun deletePayment(paymentId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val existing = paymentDao.getPaymentById(paymentId)?.toDomain() ?: return@runCatching
+            paymentDao.deletePaymentById(paymentId)
+            val allCustomers = customerDao.getAllCustomersOnce().map { it.toDomain() }
+            val matched = allCustomers.firstOrNull { it.id == existing.customerId }
+                ?: CustomerMatcher.findMatch(allCustomers, existing.customerName, existing.customerMobile)
+            if (matched != null) {
+                reconcileMatchedCustomer(matched, matched.name, matched.phoneNumber, matched.address)
+            }
+        }
+    }
+
+    suspend fun recalculateCustomerFromBills(customerId: String): Result<CustomerProfile> = withContext(Dispatchers.IO) {
+        runCatching {
+            val matched = customerDao.getCustomerById(customerId)?.toDomain()
+                ?: error("Customer not found")
+            reconcileMatchedCustomer(matched, matched.name, matched.phoneNumber, matched.address)
+            customerDao.getCustomerById(customerId)?.toDomain() ?: matched
         }
     }
 
@@ -278,20 +414,26 @@ class CashmemoRepository(
 
     suspend fun exportBackupJson(): String = withContext(Dispatchers.IO) {
         val settings = settingsDataStore.getSettingsOnce()
-        val memos = memoDao.getAllMemosOnce().map { it.toDomain().toDto() }
+        val memos = memoDao.getEverythingOnce().map { it.toDomain().toDto() }
         val customers = customerDao.getAllCustomersOnce().map { it.toDomain().toDto() }
         val rates = rateDao.getAllRatesOnce().map { it.toDomain().toDto() }
+        val payments = paymentDao.getAllPaymentsOnce().map { it.toDomain().toDto() }
+        val notes = noteDao.getAllNotesOnce().map { it.toDomain().toDto() }
+        val todos = todoDao.getAllTodosOnce().map { it.toDomain().toDto() }
         val isoFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
         val payload = BackupPayloadDto(
-            version = 6,
+            version = 7,
             appName = "Vishal_Nurshri_Cashmemo",
             exportDate = isoFormatter.format(Date()),
             settings = settings.toDto(),
             bills = memos,
             customers = customers,
-            rates = rates
+            rates = rates,
+            payments = payments,
+            notes = notes,
+            todos = todos
         )
         gson.toJson(payload)
     }
@@ -304,22 +446,42 @@ class CashmemoRepository(
             payload.settings?.let {
                 settingsDataStore.saveSettings(it.mergeInto(currentSettings))
             }
-            val importedMemos = payload.bills.map { it.toDomain(synced = false) }
+            val importedMemos = payload.bills.orEmpty().map { it.toDomain(synced = false) }
             for (m in importedMemos) {
                 memoDao.upsertMemoWithItems(m.toEntity(), m.toItemEntities())
             }
-            customerDao.upsertAll(payload.customers.map { it.toDomain().toEntity() })
-            rateDao.upsertAll(payload.rates.map { it.toDomain().toEntity() })
-            "Imported ${importedMemos.size} memos, ${payload.customers.size} customers, ${payload.rates.size} rates"
+            val importedCustomers = payload.customers.orEmpty().map { it.toDomain().toEntity() }
+            customerDao.upsertAll(importedCustomers)
+            val importedRates = payload.rates.orEmpty().map { it.toDomain().toEntity() }
+            rateDao.upsertAll(importedRates)
+            val importedPayments = payload.payments.orEmpty().map { it.toDomain() }
+            for (p in importedPayments) {
+                paymentDao.upsertPaymentWithAllocations(p.toEntity(), p.toAllocationEntities())
+            }
+            val importedNotes = payload.notes.orEmpty().map { it.toDomain().toEntity() }
+            if (importedNotes.isNotEmpty()) {
+                noteDao.upsertAll(importedNotes)
+            }
+            val importedTodos = payload.todos.orEmpty().map { it.toDomain().toEntity() }
+            if (importedTodos.isNotEmpty()) {
+                todoDao.upsertAll(importedTodos)
+            }
+            "Imported ${importedMemos.size} memos, ${importedCustomers.size} customers, ${importedRates.size} rates, ${importedPayments.size} payments, ${importedNotes.size} notes, ${importedTodos.size} tasks"
         }
     }
 
     suspend fun exportMemosCsv(): String = withContext(Dispatchers.IO) {
-        val memos = memoDao.getAllMemosOnce().map { it.toDomain() }
+        val laterPaidByMemo = paymentDao.getAllAllocationsOnce()
+            .groupBy { it.memoId }
+            .mapValues { (_, list) -> round2(list.sumOf { it.amount }) }
+        val memos = memoDao.getAllMemosOnce().map {
+            it.toDomain(laterPaid = laterPaidByMemo[it.memo.id] ?: 0.0)
+        }
         val sb = StringBuilder()
         sb.appendLine("MemoNumber,Date,CustomerName,Mobile,Address,Subtotal,Discount,Tax,PreviousDues,GrandTotal,PaidAmount,BalanceDue,PaymentMethod,Status")
         for (m in memos) {
             fun esc(value: String): String = "\"${value.replace("\"", "\"\"")}\""
+            val effectiveStatus = if (m.hasEffectivePendingDue) m.paymentStatusNote else "Fully Paid"
             sb.appendLine(
                 listOf(
                     esc(m.memoNumber),
@@ -332,10 +494,10 @@ class CashmemoRepository(
                     m.taxAmount.toString(),
                     m.previousDues.toString(),
                     m.grandTotal.toString(),
-                    m.paidAmount.toString(),
-                    m.balanceDue.toString(),
+                    m.effectivePaid.toString(),
+                    m.effectiveDue.toString(),
                     esc(m.paymentMethod),
-                    esc(m.paymentStatusNote)
+                    esc(effectiveStatus)
                 ).joinToString(",")
             )
         }
@@ -382,36 +544,16 @@ class CashmemoRepository(
         finalProfile
     }
 
-    private suspend fun syncCustomerFromBillLocally(bill: CashMemo) {
-        val name = bill.customerName.trim()
-        val phone = bill.customerMobile.trim()
-        val addr = bill.customerAddress.trim()
-        if (name.isEmpty() && phone.isEmpty()) return
-
-        val existing = customerDao.getAllCustomersOnce().map { it.toDomain() }
-        val matched = CustomerMatcher.findMatch(existing, name, phone) ?: return
-
-        val now = System.currentTimeMillis()
-        val newBal = if (bill.previousDues >= matched.outstandingBalance && matched.outstandingBalance > 0.0) {
-            bill.balanceDue
-        } else {
-            round2(max(0.0, matched.outstandingBalance + (bill.grandTotal - bill.paidAmount)))
-        }
-        val updatedCustomer = matched.copy(
-            name = name.ifEmpty { matched.name },
-            phoneNumber = phone.ifEmpty { matched.phoneNumber },
-            address = addr.ifEmpty { matched.address },
-            outstandingBalance = newBal,
-            totalPurchased = round2(matched.totalPurchased + bill.grandTotal),
-            totalPaid = round2(matched.totalPaid + bill.paidAmount),
-            lastPromiseNote = if (newBal > 0.009) "Carry Forward" else "Fully Paid",
-            lastTransactionAt = now
-        )
-        customerDao.upsertCustomer(updatedCustomer.toEntity())
-    }
-
     private fun sameCustomerKey(nameA: String, phoneA: String, nameB: String, phoneB: String): Boolean {
         return CustomerMatcher.matches(nameA, phoneA, nameB, phoneB)
+    }
+
+    private fun matchesCustomer(rawName: String, rawPhone: String, customer: CustomerProfile): Boolean {
+        val name = rawName.trim()
+        val phone = rawPhone.trim()
+        return CustomerMatcher.matches(name, phone, customer.name, customer.phoneNumber) ||
+            (phone.isNotEmpty() && phone == customer.phoneNumber.trim()) ||
+            (name.isNotEmpty() && name.equals(customer.name.trim(), ignoreCase = true))
     }
 
     private suspend fun reconcileCustomerFromMemos(rawName: String, rawPhone: String, rawAddress: String) {
@@ -421,55 +563,54 @@ class CashmemoRepository(
 
         val allCustomers = customerDao.getAllCustomersOnce().map { it.toDomain() }
         val matchedCustomer = CustomerMatcher.findMatch(allCustomers, name, phone) ?: return
+        reconcileMatchedCustomer(matchedCustomer, name, phone, rawAddress)
+    }
 
+    private suspend fun reconcileMatchedCustomer(
+        matchedCustomer: CustomerProfile,
+        rawName: String,
+        rawPhone: String,
+        rawAddress: String
+    ) {
+        val name = rawName.trim()
+        val phone = rawPhone.trim()
         val customerMemos = memoDao.getAllMemosOnce()
             .map { it.toDomain() }
-            .filter { m ->
-                CustomerMatcher.matches(m.customerName, m.customerMobile, matchedCustomer.name, matchedCustomer.phoneNumber) ||
-                    (phone.isNotEmpty() && m.customerMobile.trim() == phone) ||
-                    (name.isNotEmpty() && m.customerName.trim().equals(name, ignoreCase = true))
+            .filter { m -> matchesCustomer(m.customerName, m.customerMobile, matchedCustomer) }
+        val customerPayments = paymentDao.getAllPaymentsOnce()
+            .map { it.toDomain() }
+            .filter { p ->
+                p.customerId == matchedCustomer.id ||
+                    matchesCustomer(p.customerName, p.customerMobile, matchedCustomer)
             }
-            .sortedBy { it.createdAt }
 
-        if (customerMemos.isEmpty()) {
+        if (customerMemos.isEmpty() && customerPayments.isEmpty()) {
             customerDao.upsertCustomer(
                 matchedCustomer.copy(
+                    name = name.ifEmpty { matchedCustomer.name },
+                    phoneNumber = phone.ifEmpty { matchedCustomer.phoneNumber },
+                    address = rawAddress.trim().ifEmpty { matchedCustomer.address },
                     outstandingBalance = 0.0,
                     totalPurchased = 0.0,
                     totalPaid = 0.0,
                     lastPromiseNote = "Fully Paid",
-                    lastTransactionAt = System.currentTimeMillis()
+                    lastTransactionAt = matchedCustomer.lastTransactionAt
                 ).toEntity()
             )
             return
         }
 
-        var runningBal = 0.0
-        var sumPurchased = 0.0
-        var sumPaid = 0.0
-        for ((idx, m) in customerMemos.withIndex()) {
-            sumPurchased += m.grandTotal
-            sumPaid += m.paidAmount
-            runningBal = if (idx == 0) {
-                m.balanceDue
-            } else if (m.previousDues > 0.009 || (m.previousDues >= runningBal && runningBal > 0.009)) {
-                m.balanceDue
-            } else {
-                round2(max(0.0, runningBal + (m.grandTotal - m.paidAmount)))
-            }
-        }
-        val cleanBal = round2(max(0.0, runningBal))
-        val latest = customerMemos.last()
+        val summary = CustomerLedgerCalculator.calculate(customerMemos, customerPayments)
         customerDao.upsertCustomer(
             matchedCustomer.copy(
                 name = name.ifEmpty { matchedCustomer.name },
                 phoneNumber = phone.ifEmpty { matchedCustomer.phoneNumber },
                 address = rawAddress.trim().ifEmpty { matchedCustomer.address },
-                outstandingBalance = cleanBal,
-                totalPurchased = round2(sumPurchased),
-                totalPaid = round2(sumPaid),
-                lastPromiseNote = if (cleanBal > 0.009) latest.paymentStatusNote.ifBlank { "Carry Forward" } else "Fully Paid",
-                lastTransactionAt = latest.updatedAt
+                outstandingBalance = summary.outstanding,
+                totalPurchased = summary.totalPurchased,
+                totalPaid = summary.totalPaid,
+                lastPromiseNote = summary.lastStatusNote,
+                lastTransactionAt = if (summary.lastTransactionAt > 0L) summary.lastTransactionAt else matchedCustomer.lastTransactionAt
             ).toEntity()
         )
     }

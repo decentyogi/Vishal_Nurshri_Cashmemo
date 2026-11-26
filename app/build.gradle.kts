@@ -58,6 +58,8 @@ android {
             )
         }
         debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
             isMinifyEnabled = false
         }
     }
@@ -128,6 +130,7 @@ dependencies {
     // ZXing Core for Crisp UPI Payment QR Codes
     implementation("com.google.zxing:core:3.5.3")
 
-    // Debug Tooling
+    // Debug Tooling & Unit Tests
+    testImplementation("junit:junit:4.13.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

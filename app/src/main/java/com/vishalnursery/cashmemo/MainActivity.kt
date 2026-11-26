@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.StickyNote2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vishalnursery.cashmemo.ui.components.BillDocumentRenderer
@@ -58,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.vishalnursery.cashmemo.ui.screens.CatalogLedgerScreen
 import com.vishalnursery.cashmemo.ui.screens.HistoryDashboardScreen
+import com.vishalnursery.cashmemo.ui.screens.NotesScreen
 import com.vishalnursery.cashmemo.ui.screens.ReviewEditorScreen
 import com.vishalnursery.cashmemo.ui.screens.ScannerScreen
 import com.vishalnursery.cashmemo.ui.screens.SettingsScreen
@@ -65,6 +68,7 @@ import com.vishalnursery.cashmemo.ui.theme.CashmemoTheme
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import com.vishalnursery.cashmemo.ui.viewmodel.AppDestination
 import com.vishalnursery.cashmemo.ui.viewmodel.CashmemoViewModel
+import com.vishalnursery.cashmemo.ui.viewmodel.NotesViewModel
 import com.vishalnursery.cashmemo.ui.viewmodel.RateReviewSource
 import com.vishalnursery.cashmemo.ui.viewmodel.UiEvent
 
@@ -78,7 +82,10 @@ class MainActivity : ComponentActivity() {
                 val viewModel: CashmemoViewModel = viewModel(
                     factory = CashmemoViewModel.Factory(app.repository, app.geminiVisionService)
                 )
-                CashmemoAppRoot(viewModel = viewModel)
+                val notesViewModel: NotesViewModel = viewModel(
+                    factory = NotesViewModel.Factory(app.notesRepository)
+                )
+                CashmemoAppRoot(viewModel = viewModel, notesViewModel = notesViewModel)
             }
         }
     }
@@ -86,11 +93,22 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
+fun CashmemoAppRoot(
+    viewModel: CashmemoViewModel,
+    notesViewModel: NotesViewModel
+) {
     val uiState by viewModel.uiState.collectAsState()
+    val notesUiState by notesViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val bottomOverlayInset = remember { mutableStateOf(0.dp) }
     val context = LocalContext.current
+
+    LaunchedEffect(notesViewModel) {
+        notesViewModel.messages.collect { msg ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -105,10 +123,11 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                         val files = withContext(Dispatchers.Default) {
                             BillDocumentRenderer.renderJpegFiles(context, event.memo, event.settings)
                         }
+                        val prefix = if (event.memo.isOrder) "OrderMemo" else "CashMemo"
                         ShareExportHelper.shareImageFiles(
                             context = context,
                             files = files,
-                            subject = "CashMemo_${event.memo.memoNumber}"
+                            subject = "${prefix}_${event.memo.memoNumber}"
                         )
                     }.onFailure { err ->
                         snackbarHostState.currentSnackbarData?.dismiss()
@@ -120,10 +139,11 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                         val file = withContext(Dispatchers.Default) {
                             BillDocumentRenderer.renderPdfFile(context, event.memo, event.settings)
                         }
+                        val prefix = if (event.memo.isOrder) "OrderMemo" else "CashMemo"
                         ShareExportHelper.sharePdfFile(
                             context = context,
                             file = file,
-                            subject = "CashMemo_${event.memo.memoNumber}.pdf"
+                            subject = "${prefix}_${event.memo.memoNumber}.pdf"
                         )
                     }.onFailure { err ->
                         snackbarHostState.currentSnackbarData?.dismiss()
@@ -141,10 +161,11 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
     }
 
     val navItems = listOf(
-        AppDestination.SCANNER to Icons.Default.DocumentScanner,
         AppDestination.EDITOR to Icons.Default.EditNote,
+        AppDestination.LEDGER to Icons.Default.People,
+        AppDestination.SCANNER to Icons.Default.DocumentScanner,
         AppDestination.HISTORY to Icons.Default.History,
-        AppDestination.LEDGER to Icons.Default.People
+        AppDestination.NOTES to Icons.Default.StickyNote2
     )
 
     CompositionLocalProvider(LocalBottomOverlayInset provides bottomOverlayInset) {
@@ -245,7 +266,14 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                             selected = uiState.activeDestination == destination,
                             onClick = { viewModel.navigateTo(destination) },
                             icon = { Icon(icon, contentDescription = destination.label) },
-                            label = { Text(destination.label) }
+                            label = {
+                                Text(
+                                    text = destination.label,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         )
                     }
                 }
@@ -284,6 +312,9 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     plantRates = uiState.plantRates,
                     onUpdateMemoNumber = viewModel::updateMemoNumber,
                     onUpdateDate = viewModel::updateDate,
+                    onToggleMemoType = viewModel::toggleMemoType,
+                    onUpdateDueDate = viewModel::updateDueDate,
+                    onUpdateOrderStatus = viewModel::updateOrderStatusInEditor,
                     onUpdateCustomerName = viewModel::updateCustomerName,
                     onUpdateCustomerMobile = viewModel::updateCustomerMobile,
                     onUpdateCustomerAddress = viewModel::updateCustomerAddress,
@@ -295,6 +326,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     onAddItemRow = viewModel::addItemRow,
                     onCloneItemRow = viewModel::cloneItemRow,
                     onRemoveItemRow = viewModel::removeItemRow,
+                    onMoveItemRow = viewModel::moveItemRow,
                     onUpdateItemDescription = viewModel::updateItemDescription,
                     onUpdateItemQuantity = viewModel::updateItemQuantity,
                     onUpdateItemRate = viewModel::updateItemRate,
@@ -319,14 +351,21 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
 
                 AppDestination.HISTORY -> HistoryDashboardScreen(
                     memos = uiState.filteredMemos,
+                    orders = uiState.filteredOrders,
                     stats = uiState.dashboardStats,
+                    orderStats = uiState.orderStats,
                     settings = uiState.settings,
+                    historyTab = uiState.historyTab,
                     searchQuery = uiState.searchQuery,
                     selectedDate = uiState.selectedHistoryDate,
                     activeFilter = uiState.historyFilter,
+                    activeOrderFilter = uiState.orderFilter,
+                    onHistoryTabChange = viewModel::setHistoryTab,
                     onSearchQueryChange = viewModel::updateSearchQuery,
                     onSelectedDateChange = viewModel::updateSelectedHistoryDate,
                     onFilterChange = viewModel::updateHistoryFilter,
+                    onOrderFilterChange = viewModel::updateOrderFilter,
+                    onDeliverOrder = viewModel::startDeliverOrder,
                     onEditMemo = viewModel::editMemo,
                     onDuplicateMemo = viewModel::duplicateMemo,
                     onPrintMemo = viewModel::printMemo,
@@ -342,6 +381,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                 AppDestination.LEDGER -> CatalogLedgerScreen(
                     customers = uiState.customers,
                     memos = uiState.allMemos,
+                    payments = uiState.payments,
                     plantRates = uiState.plantRates,
                     settings = uiState.settings,
                     rateScan = uiState.rateScan,
@@ -358,7 +398,9 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     onClearRateScanError = viewModel::clearRateScanError,
                     onOpenSettings = { viewModel.navigateTo(AppDestination.SETTINGS) },
                     onSaveCustomer = viewModel::saveCustomer,
-                    onSettleCustomerDue = viewModel::settleCustomerDue,
+                    onReceivePayment = viewModel::receiveCustomerPayment,
+                    onDeletePayment = viewModel::deleteCustomerPayment,
+                    onRecalculateCustomer = viewModel::recalculateCustomerBalance,
                     onDeleteCustomer = viewModel::deleteCustomer,
                     onCreateBillForCustomer = viewModel::createNewBillForCustomer,
                     onEditMemo = viewModel::editMemo,
@@ -369,6 +411,21 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     onDeletePlantRate = viewModel::deletePlantRate,
                     onExportPlantRatesJson = viewModel::exportPlantRatesJson,
                     onExportPlantRatesCsv = viewModel::exportPlantRatesCsv,
+                    modifier = contentModifier
+                )
+
+                AppDestination.NOTES -> NotesScreen(
+                    notesState = notesUiState,
+                    customers = uiState.customers,
+                    pendingOrders = uiState.allOrders.filter { it.orderStatus == com.vishalnursery.cashmemo.domain.model.OrderStatus.PENDING },
+                    onSearchQueryChange = notesViewModel::updateSearchQuery,
+                    onTodoFilterChange = notesViewModel::updateTodoFilter,
+                    onSaveNote = notesViewModel::saveNote,
+                    onTogglePinNote = notesViewModel::togglePinNote,
+                    onDeleteNote = notesViewModel::deleteNote,
+                    onSaveTodo = notesViewModel::saveTodo,
+                    onToggleTodoDone = notesViewModel::toggleTodoDone,
+                    onDeleteTodo = notesViewModel::deleteTodo,
                     modifier = contentModifier
                 )
 

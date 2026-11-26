@@ -62,6 +62,9 @@ class SyncManager(
     private val memoDao = database.memoDao()
     private val customerDao = database.customerDao()
     private val rateDao = database.plantRateDao()
+    private val paymentDao = database.paymentDao()
+    private val noteDao = database.noteDao()
+    private val todoDao = database.todoDao()
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
 
     private val backupDir: File by lazy {
@@ -88,20 +91,26 @@ class SyncManager(
 
     suspend fun createSafetySnapshot(): File = withContext(Dispatchers.IO) {
         val settings = settingsDataStore.getSettingsOnce()
-        val memos = memoDao.getAllMemosOnce().map { it.toDomain().toDto() }
+        val memos = memoDao.getEverythingOnce().map { it.toDomain().toDto() }
         val customers = customerDao.getAllCustomersOnce().map { it.toDomain().toDto() }
         val rates = rateDao.getAllRatesOnce().map { it.toDomain().toDto() }
+        val payments = paymentDao.getAllPaymentsOnce().map { it.toDomain().toDto() }
+        val notes = noteDao.getAllNotesOnce().map { it.toDomain().toDto() }
+        val todos = todoDao.getAllTodosOnce().map { it.toDomain().toDto() }
         val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
         val payload = BackupPayloadDto(
-            version = 6,
+            version = 7,
             appName = "Vishal_Nurshri_Cashmemo",
             exportDate = iso.format(Date()),
             settings = settings.toDto(),
             bills = memos,
             customers = customers,
-            rates = rates
+            rates = rates,
+            payments = payments,
+            notes = notes,
+            todos = todos
         )
         val file = File(backupDir, "snapshot_${System.currentTimeMillis()}.json")
         file.writeText(gson.toJson(payload), Charsets.UTF_8)
@@ -134,22 +143,36 @@ class SyncManager(
                 ?: error("Corrupt snapshot file")
 
             var memosReinserted = 0
-            for (b in payload.bills) {
+            for (b in payload.bills.orEmpty()) {
                 val domain = b.toDomain(synced = false)
                 memoDao.upsertMemoWithItems(domain.toEntity(), domain.toItemEntities())
                 memosReinserted++
             }
             var customersReinserted = 0
-            for (c in payload.customers) {
+            for (c in payload.customers.orEmpty()) {
                 customerDao.upsertCustomer(c.toDomain().toEntity())
                 customersReinserted++
             }
             var ratesReinserted = 0
-            for (r in payload.rates) {
+            for (r in payload.rates.orEmpty()) {
                 rateDao.upsertRate(r.toDomain().toEntity())
                 ratesReinserted++
             }
-            "Restored from snapshot: $memosReinserted bills, $customersReinserted customers, $ratesReinserted plant rates"
+            var paymentsReinserted = 0
+            for (p in payload.payments.orEmpty()) {
+                val domain = p.toDomain()
+                paymentDao.upsertPaymentWithAllocations(domain.toEntity(), domain.toAllocationEntities())
+                paymentsReinserted++
+            }
+            val notesReinserted = payload.notes.orEmpty().map { it.toDomain().toEntity() }
+            if (notesReinserted.isNotEmpty()) {
+                noteDao.upsertAll(notesReinserted)
+            }
+            val todosReinserted = payload.todos.orEmpty().map { it.toDomain().toEntity() }
+            if (todosReinserted.isNotEmpty()) {
+                todoDao.upsertAll(todosReinserted)
+            }
+            "Restored from snapshot: $memosReinserted bills, $customersReinserted customers, $ratesReinserted plant rates, $paymentsReinserted payments, ${notesReinserted.size} notes, ${todosReinserted.size} tasks"
         }
     }
 

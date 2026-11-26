@@ -90,9 +90,10 @@ object BillDocumentRenderer {
     ): List<File> {
         val exportDir = File(context.filesDir, "exports").apply { mkdirs() }
         val safeMemoNo = sanitizeFileToken(memo.memoNumber)
+        val filePrefix = if (memo.isOrder) "OrderMemo" else "CashMemo"
         // Clear stale page exports for the same memo so page count reductions never leave orphan files
         exportDir.listFiles { _, name ->
-            name.startsWith("CashMemo_${safeMemoNo}_P") && name.endsWith(".jpg")
+            name.startsWith("${filePrefix}_${safeMemoNo}_P") && name.endsWith(".jpg")
         }?.forEach { it.delete() }
 
         val totalPages = calculatePageCount(memo, settings.billExportLayout)
@@ -107,7 +108,7 @@ object BillDocumentRenderer {
                 renderPage(canvas, memo, settings, pageIndex, totalPages)
                 canvas.restore()
 
-                val file = File(exportDir, "CashMemo_${safeMemoNo}_P${pageIndex + 1}.jpg")
+                val file = File(exportDir, "${filePrefix}_${safeMemoNo}_P${pageIndex + 1}.jpg")
                 FileOutputStream(file).use { stream ->
                     bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
                     stream.flush()
@@ -127,7 +128,8 @@ object BillDocumentRenderer {
     ): File {
         val exportDir = File(context.filesDir, "exports").apply { mkdirs() }
         val safeMemoNo = sanitizeFileToken(memo.memoNumber)
-        val file = File(exportDir, "CashMemo_${safeMemoNo}.pdf")
+        val filePrefix = if (memo.isOrder) "OrderMemo" else "CashMemo"
+        val file = File(exportDir, "${filePrefix}_${safeMemoNo}.pdf")
 
         val pdfDocument = PdfDocument()
         try {
@@ -216,7 +218,20 @@ object BillDocumentRenderer {
         // --- Header Block (repeats identically on every page) ---
         // Top-left rosette emblem, centered Mob. (only if configured), top-right sprout emblem
         drawRosetteEmblem(canvas, cLeft + 26f, 114f, 22f, CLASSIC_MAROON)
-        if (settings.phone.isNotBlank()) {
+        if (memo.isOrder) {
+            val orderTopText = if (settings.phone.isNotBlank()) {
+                "ORDER MEMO  |  Mob. ${settings.phone.trim()}"
+            } else {
+                "ORDER MEMO"
+            }
+            drawCenteredText(
+                canvas,
+                orderTopText,
+                centerX,
+                122f,
+                textPaint(29f, CLASSIC_MAROON, bold = true)
+            )
+        } else if (settings.phone.isNotBlank()) {
             drawCenteredText(
                 canvas,
                 "Mob. ${settings.phone.trim()}",
@@ -288,7 +303,7 @@ object BillDocumentRenderer {
 
         // Row 1:
         // Left: Label नं० anchored on the left, followed by the maroon-bordered rounded box displaying <Memo_No> (Page X/Y)
-        canvas.drawText("नं०", cLeft, 476f, labelPaint)
+        canvas.drawText(if (memo.isOrder) "ऑर्डर" else "नं०", cLeft, 476f, labelPaint)
         val memoBoxText = "${memo.memoNumber} (Page ${pageIndex + 1}/$totalPages)"
         val noBoxRect = RectF(valLeft, 438f, valRight, 492f)
         val boxStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -371,6 +386,21 @@ object BillDocumentRenderer {
                 centerX = valCenterX,
                 baselineY = 594f,
                 maxWidth = valRight - valLeft - 16f,
+                paint = valuePaint
+            )
+        }
+        if (memo.isOrder && memo.dueDate.isNotBlank()) {
+            val delivLabel = "डिलीवरी: "
+            val delivLabelW = labelPaint.measureText(delivLabel)
+            canvas.drawText(delivLabel, rightColLeft, 594f, labelPaint)
+            val rightDelivStart = rightColLeft + delivLabelW + 6f
+            canvas.drawLine(rightDelivStart, 601f, cRight, 601f, subtleRulePaint)
+            drawCenteredEllipsizedText(
+                canvas = canvas,
+                text = memo.dueDate.trim(),
+                centerX = (rightDelivStart + cRight) / 2f,
+                baselineY = 594f,
+                maxWidth = cRight - rightDelivStart - 10f,
                 paint = valuePaint
             )
         }
@@ -495,7 +525,7 @@ object BillDocumentRenderer {
         val summaryAmount = if (isFinalPage) memo.totalPayable else runningSubtotal
 
         val summaryLabel = if (isFinalPage) {
-            "कुल देय (Total Payable inc. Dues) :-"
+            if (memo.isOrder) "कुल ऑर्डर राशि (Order Total) :-" else "कुल देय (Total Payable inc. Dues) :-"
         } else {
             "आगे ले जाया गया (Carried Over P${pageIndex + 2}) :-"
         }
@@ -551,9 +581,14 @@ object BillDocumentRenderer {
                 if (memo.taxAmount > 0.009) {
                     append("  |  Tax (${formatCleanQty(memo.taxPercentage)}%): +₹ ${formatPlainMoney(memo.taxAmount)}")
                 }
-                append("  |  पिछला बकाया (Dues): +₹ ${formatPlainMoney(memo.previousDues)}")
+                if (!memo.isOrder) {
+                    append("  |  पिछला बकाया (Dues): +₹ ${formatPlainMoney(memo.previousDues)}")
+                }
             }
-            val dueSuffix = if (memo.balanceDue > 0.009) {
+            val dueSuffix = if (memo.isOrder) {
+                val note = memo.paymentStatusNote.trim()
+                if (note.isNotBlank()) " [$note]" else ""
+            } else if (memo.balanceDue > 0.009) {
                 val note = memo.paymentStatusNote.trim()
                 if (note.isNotBlank() &&
                     !note.equals("Carry Forward", ignoreCase = true) &&
@@ -566,7 +601,11 @@ object BillDocumentRenderer {
             } else {
                 ""
             }
-            val line2 = "जमा राशि (Paid): ₹ ${formatPlainMoney(memo.paidAmount)}  |  शेष बकाया (Balance Due): ₹ ${formatPlainMoney(memo.balanceDue)}$dueSuffix"
+            val line2 = if (memo.isOrder) {
+                "अग्रिम जमा (Advance Paid): ₹ ${formatPlainMoney(memo.paidAmount)}  |  शेष (Balance): ₹ ${formatPlainMoney(memo.balanceDue)}$dueSuffix"
+            } else {
+                "जमा राशि (Paid): ₹ ${formatPlainMoney(memo.paidAmount)}  |  शेष बकाया (Balance Due): ₹ ${formatPlainMoney(memo.balanceDue)}$dueSuffix"
+            }
 
             val line1Top = wordsY + wordsUsedHeight + 16f
             val h1 = drawFittingStaticText(
@@ -621,7 +660,7 @@ object BillDocumentRenderer {
                     textAlign = Paint.Align.CENTER
                 }
                 canvas.drawText(
-                    "Balance Due",
+                    if (memo.isOrder) "Balance" else "Balance Due",
                     badgeRect.centerX(),
                     badgeRect.top + 36f,
                     labelPaint
@@ -790,7 +829,7 @@ object BillDocumentRenderer {
 
         // Header
         val headerMeta = buildString {
-            append("CASH MEMO")
+            append(if (memo.isOrder) "ORDER MEMO" else "CASH MEMO")
             if (IndianCurrencyFormatter.isValidGstin(settings.gstin)) {
                 append(" | GSTIN: ").append(settings.gstin.trim())
             }
@@ -846,8 +885,18 @@ object BillDocumentRenderer {
 
         // Meta row
         val metaPaint = textPaint(27f, MODERN_MAROON, bold = true)
-        canvas.drawText("Memo #: ${memo.memoNumber}", cLeft, 368f, metaPaint)
-        drawRightText(canvas, "Date: ${memo.date}", cRight, 368f, metaPaint)
+        canvas.drawText(
+            if (memo.isOrder) "Order #: ${memo.memoNumber}" else "Memo #: ${memo.memoNumber}",
+            cLeft,
+            368f,
+            metaPaint
+        )
+        val rightMetaDate = if (memo.isOrder && memo.dueDate.isNotBlank()) {
+            "Date: ${memo.date} | Delivery: ${memo.dueDate}"
+        } else {
+            "Date: ${memo.date}"
+        }
+        drawRightText(canvas, rightMetaDate, cRight, 368f, metaPaint)
 
         // Customer Box
         val custRect = RectF(cLeft, 392f, cRight, 466f)
@@ -957,7 +1006,7 @@ object BillDocumentRenderer {
             // Status Badge at top of Right Totals Column
             val totLeft = 980f
             val badgeCenterX = (totLeft + cRight) / 2f
-            drawModernStatusBadge(canvas, badgeCenterX, footerTop, memo.balanceDue)
+            drawModernStatusBadge(canvas, badgeCenterX, footerTop, memo.balanceDue, isOrder = memo.isOrder)
 
             // UPI QR block (only if valid UPI VPA configured; encodes Paid Amount if > 0 else Total Payable)
             if (IndianCurrencyFormatter.isValidUpiVpa(settings.upiVpa)) {
@@ -1009,19 +1058,35 @@ object BillDocumentRenderer {
                 drawSummaryLine(canvas, totLeft, cRight, ty, "Tax (${formatCleanQty(memo.taxPercentage)}%)", IndianCurrencyFormatter.formatInr(memo.taxAmount, settings.currencySymbol), totPaint)
                 ty += 42f
             }
-            if (memo.previousDues > 0.009) {
+            if (!memo.isOrder && memo.previousDues > 0.009) {
                 drawSummaryLine(canvas, totLeft, cRight, ty, "Previous Dues", "+ ${IndianCurrencyFormatter.formatInr(memo.previousDues, settings.currencySymbol)}", totPaint)
                 ty += 42f
             }
 
             canvas.drawLine(totLeft, ty - 20f, cRight, ty - 20f, dividerPaint)
             ty += 12f
-            drawSummaryLine(canvas, totLeft, cRight, ty, "Total Payable", IndianCurrencyFormatter.formatInr(memo.totalPayable, settings.currencySymbol), totBoldMaroon)
+            drawSummaryLine(
+                canvas,
+                totLeft,
+                cRight,
+                ty,
+                if (memo.isOrder) "Order Total" else "Total Payable",
+                IndianCurrencyFormatter.formatInr(memo.totalPayable, settings.currencySymbol),
+                totBoldMaroon
+            )
             ty += 20f
             canvas.drawLine(totLeft, ty, cRight, ty, dividerPaint)
             ty += 40f
 
-            drawSummaryLine(canvas, totLeft, cRight, ty, "Paid (${memo.paymentMethod})", IndianCurrencyFormatter.formatInr(memo.paidAmount, settings.currencySymbol), totPaint)
+            drawSummaryLine(
+                canvas,
+                totLeft,
+                cRight,
+                ty,
+                if (memo.isOrder) "Advance Paid (${memo.paymentMethod})" else "Paid (${memo.paymentMethod})",
+                IndianCurrencyFormatter.formatInr(memo.paidAmount, settings.currencySymbol),
+                totPaint
+            )
             if (memo.hasPendingDue) {
                 ty += 42f
                 drawSummaryLine(
@@ -1029,7 +1094,7 @@ object BillDocumentRenderer {
                     totLeft,
                     cRight,
                     ty,
-                    "Carry Forward",
+                    if (memo.isOrder) "Balance" else "Carry Forward",
                     IndianCurrencyFormatter.formatInr(memo.balanceDue, settings.currencySymbol),
                     textPaint(26f, DUE_RED, bold = true)
                 )
@@ -1069,7 +1134,8 @@ object BillDocumentRenderer {
         canvas: Canvas,
         centerX: Float,
         top: Float,
-        balanceDue: Double
+        balanceDue: Double,
+        isOrder: Boolean = false
     ) {
         val isDue = balanceDue > 0.009
         val amtStr = "₹ " + formatPlainMoney(balanceDue)
@@ -1099,7 +1165,7 @@ object BillDocumentRenderer {
             val labelPaint = textPaint(24f, DUE_RED, bold = true).apply {
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("Balance Due", badgeRect.centerX(), badgeRect.top + 36f, labelPaint)
+            canvas.drawText(if (isOrder) "Balance" else "Balance Due", badgeRect.centerX(), badgeRect.top + 36f, labelPaint)
 
             val maxAmountW = badgeWidth - 28f
             var amountSize = 46f

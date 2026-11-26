@@ -4,20 +4,36 @@ import com.vishalnursery.cashmemo.data.local.entity.CashMemoEntity
 import com.vishalnursery.cashmemo.data.local.entity.CustomerEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoItemEntity
 import com.vishalnursery.cashmemo.data.local.entity.MemoWithItems
+import com.vishalnursery.cashmemo.data.local.entity.NoteEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentAllocationEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentEntity
+import com.vishalnursery.cashmemo.data.local.entity.PaymentWithAllocations
 import com.vishalnursery.cashmemo.data.local.entity.PlantRateEntity
+import com.vishalnursery.cashmemo.data.local.entity.TodoEntity
 import com.vishalnursery.cashmemo.data.remote.dto.BillDto
 import com.vishalnursery.cashmemo.data.remote.dto.CustomerDto
 import com.vishalnursery.cashmemo.data.remote.dto.MemoItemDto
+import com.vishalnursery.cashmemo.data.remote.dto.NoteDto
+import com.vishalnursery.cashmemo.data.remote.dto.PaymentAllocationDto
+import com.vishalnursery.cashmemo.data.remote.dto.PaymentDto
 import com.vishalnursery.cashmemo.data.remote.dto.PlantRateDto
 import com.vishalnursery.cashmemo.data.remote.dto.SettingsDto
+import com.vishalnursery.cashmemo.data.remote.dto.TodoDto
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CashMemo
+import com.vishalnursery.cashmemo.domain.model.CustomerPayment
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
 import com.vishalnursery.cashmemo.domain.model.DiscountType
+import com.vishalnursery.cashmemo.domain.model.GeneralNote
 import com.vishalnursery.cashmemo.domain.model.MemoItem
+import com.vishalnursery.cashmemo.domain.model.MemoType
+import com.vishalnursery.cashmemo.domain.model.OrderStatus
+import com.vishalnursery.cashmemo.domain.model.PaymentAllocation
 import com.vishalnursery.cashmemo.domain.model.PlantRate
+import com.vishalnursery.cashmemo.domain.model.TodoPriority
+import com.vishalnursery.cashmemo.domain.model.TodoTask
 
-fun MemoWithItems.toDomain(): CashMemo = CashMemo(
+fun MemoWithItems.toDomain(laterPaid: Double = 0.0): CashMemo = CashMemo(
     id = memo.id,
     memoNumber = memo.memoNumber,
     date = memo.date,
@@ -43,6 +59,10 @@ fun MemoWithItems.toDomain(): CashMemo = CashMemo(
     sourceImageUri = memo.sourceImageUri,
     isWholesale = memo.isWholesale,
     isSynced = memo.isSynced,
+    memoType = MemoType.fromWire(memo.memoType),
+    orderStatus = OrderStatus.fromWire(memo.orderStatus),
+    linkedMemoId = memo.linkedMemoId,
+    laterPaid = laterPaid,
     createdAt = memo.createdAt,
     updatedAt = memo.updatedAt
 )
@@ -80,6 +100,9 @@ fun CashMemo.toEntity(): CashMemoEntity = CashMemoEntity(
     sourceImageUri = sourceImageUri,
     isWholesale = isWholesale,
     isSynced = isSynced,
+    memoType = memoType.wireValue,
+    orderStatus = if (memoType == MemoType.ORDER) orderStatus.wireValue else "",
+    linkedMemoId = linkedMemoId,
     createdAt = createdAt,
     updatedAt = updatedAt
 )
@@ -127,6 +150,9 @@ fun CashMemo.toDto(): BillDto = BillDto(
     paymentStatusNote = paymentStatusNote,
     notes = notes,
     isWholesale = isWholesale,
+    memoType = memoType.wireValue,
+    orderStatus = if (memoType == MemoType.ORDER) orderStatus.wireValue else "",
+    linkedMemoId = linkedMemoId,
     createdAt = createdAt,
     updatedAt = updatedAt
 )
@@ -163,6 +189,9 @@ fun BillDto.toDomain(synced: Boolean = true): CashMemo = CashMemo(
     notes = notes,
     isWholesale = isWholesale ?: false,
     isSynced = synced,
+    memoType = MemoType.fromWire(memoType),
+    orderStatus = OrderStatus.fromWire(orderStatus),
+    linkedMemoId = linkedMemoId ?: "",
     createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
     updatedAt = if (updatedAt > 0L) updatedAt else 0L
 )
@@ -267,6 +296,7 @@ fun BusinessSettings.toDto(): SettingsDto = SettingsDto(
     currencySymbol = currencySymbol,
     memoPrefix = memoPrefix,
     nextMemoNumber = nextMemoNumber,
+    nextOrderNumber = nextOrderNumber,
     defaultTaxPercentage = defaultTaxPercentage,
     enableTax = enableTax,
     taxType = taxType,
@@ -288,6 +318,7 @@ fun SettingsDto.mergeInto(current: BusinessSettings): BusinessSettings = current
     currencySymbol = currencySymbol.ifBlank { "₹" },
     memoPrefix = memoPrefix.ifBlank { current.memoPrefix },
     nextMemoNumber = maxOf(current.nextMemoNumber, nextMemoNumber),
+    nextOrderNumber = maxOf(current.nextOrderNumber, nextOrderNumber ?: current.nextOrderNumber),
     defaultTaxPercentage = defaultTaxPercentage,
     enableTax = enableTax,
     taxType = taxType.ifBlank { "GST" },
@@ -295,4 +326,184 @@ fun SettingsDto.mergeInto(current: BusinessSettings): BusinessSettings = current
     upiDefaultNote = upiDefaultNote.ifBlank { current.upiDefaultNote },
     signerName = signerName.ifBlank { current.signerName },
     termsNote = termsNote.ifBlank { current.termsNote }
+)
+
+fun PaymentAllocationEntity.toDomain(): PaymentAllocation = PaymentAllocation(
+    id = id,
+    paymentId = paymentId,
+    memoId = memoId,
+    amount = amount
+)
+
+fun PaymentWithAllocations.toDomain(): CustomerPayment = CustomerPayment(
+    id = payment.id,
+    customerId = payment.customerId,
+    customerName = payment.customerName,
+    customerMobile = payment.customerMobile,
+    amount = payment.amount,
+    method = payment.method,
+    note = payment.note,
+    date = payment.date,
+    createdAt = payment.createdAt,
+    allocations = allocations.map { it.toDomain() }
+)
+
+fun CustomerPayment.toEntity(): PaymentEntity = PaymentEntity(
+    id = id,
+    customerId = customerId,
+    customerName = customerName,
+    customerMobile = customerMobile,
+    amount = amount,
+    method = method,
+    note = note,
+    date = date,
+    createdAt = createdAt
+)
+
+fun CustomerPayment.toAllocationEntities(): List<PaymentAllocationEntity> = allocations.map {
+    PaymentAllocationEntity(
+        id = it.id,
+        paymentId = id,
+        memoId = it.memoId,
+        amount = it.amount
+    )
+}
+
+fun CustomerPayment.toDto(): PaymentDto = PaymentDto(
+    id = id,
+    customerId = customerId,
+    customerName = customerName,
+    customerMobile = customerMobile,
+    amount = amount,
+    method = method,
+    note = note,
+    date = date,
+    createdAt = createdAt,
+    allocations = allocations.map {
+        PaymentAllocationDto(
+            id = it.id,
+            paymentId = id,
+            memoId = it.memoId,
+            amount = it.amount
+        )
+    }
+)
+
+fun PaymentDto.toDomain(): CustomerPayment {
+    val payId = id.ifBlank { "pay_${System.currentTimeMillis()}" }
+    return CustomerPayment(
+        id = payId,
+        customerId = customerId,
+        customerName = customerName,
+        customerMobile = customerMobile,
+        amount = amount,
+        method = method.ifBlank { "Cash" },
+        note = note,
+        date = date.ifBlank { CashMemo.todayFormatted() },
+        createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
+        allocations = allocations.orEmpty().map { a ->
+            PaymentAllocation(
+                id = a.id.ifBlank { "alloc_${System.nanoTime()}" },
+                paymentId = payId,
+                memoId = a.memoId,
+                amount = a.amount
+            )
+        }
+    )
+}
+
+fun NoteEntity.toDomain(): GeneralNote = GeneralNote(
+    id = id,
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun GeneralNote.toEntity(): NoteEntity = NoteEntity(
+    id = id,
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun GeneralNote.toDto(): NoteDto = NoteDto(
+    id = id,
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun NoteDto.toDomain(): GeneralNote = GeneralNote(
+    id = id.ifBlank { "note_${System.currentTimeMillis()}" },
+    title = title,
+    body = body,
+    customerId = customerId,
+    customerName = customerName,
+    isPinned = isPinned,
+    createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
+    updatedAt = if (updatedAt > 0L) updatedAt else System.currentTimeMillis()
+)
+
+fun TodoEntity.toDomain(): TodoTask = TodoTask(
+    id = id,
+    title = title,
+    dueDate = dueDate,
+    priority = TodoPriority.fromWire(priority),
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun TodoTask.toEntity(): TodoEntity = TodoEntity(
+    id = id,
+    title = title,
+    dueDate = dueDate,
+    priority = priority.wireValue,
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun TodoTask.toDto(): TodoDto = TodoDto(
+    id = id,
+    title = title,
+    dueDate = dueDate,
+    priority = priority.wireValue,
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = createdAt,
+    updatedAt = updatedAt
+)
+
+fun TodoDto.toDomain(): TodoTask = TodoTask(
+    id = id.ifBlank { "todo_${System.currentTimeMillis()}" },
+    title = title,
+    dueDate = dueDate,
+    priority = TodoPriority.fromWire(priority),
+    customerId = customerId,
+    customerName = customerName,
+    isDone = isDone,
+    doneAt = doneAt,
+    createdAt = if (createdAt > 0L) createdAt else System.currentTimeMillis(),
+    updatedAt = if (updatedAt > 0L) updatedAt else System.currentTimeMillis()
 )

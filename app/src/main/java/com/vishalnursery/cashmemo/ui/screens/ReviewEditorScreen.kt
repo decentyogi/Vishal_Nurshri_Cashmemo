@@ -10,6 +10,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
@@ -50,6 +53,7 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -72,9 +76,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,8 +89,14 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -94,6 +107,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.vishalnursery.cashmemo.domain.model.BillExportLayout
 import com.vishalnursery.cashmemo.domain.model.BusinessSettings
 import com.vishalnursery.cashmemo.domain.model.CustomerProfile
@@ -106,6 +120,8 @@ import com.vishalnursery.cashmemo.ui.components.LocalBottomOverlayInset
 import com.vishalnursery.cashmemo.ui.components.UpiQrDialog
 import com.vishalnursery.cashmemo.ui.theme.NurseryColors
 import com.vishalnursery.cashmemo.ui.viewmodel.EditorUiState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
@@ -128,6 +144,7 @@ fun ReviewEditorScreen(
     onAddItemRow: () -> Unit,
     onCloneItemRow: (Int) -> Unit,
     onRemoveItemRow: (Int) -> Unit,
+    onMoveItemRow: (Int, Int) -> Unit = { _, _ -> },
     onUpdateItemDescription: (Int, String) -> Unit,
     onUpdateItemQuantity: (Int, String) -> Unit,
     onUpdateItemRate: (Int, String) -> Unit,
@@ -167,8 +184,71 @@ fun ReviewEditorScreen(
     var showShareSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // Active expanded row tracker (only one row expanded at a time on large bills)
-    var expandedRowIndex by remember { mutableStateOf<Int?>(0) }
+    // Active expanded row tracker by ID (survives drag reordering)
+    var expandedItemId by remember { mutableStateOf<String?>(editorState.items.firstOrNull()?.id) }
+    var pendingExpandNewRow by remember { mutableStateOf(false) }
+    var isReorderMode by remember { mutableStateOf(false) }
+    var draggedItemId by remember { mutableStateOf<String?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var scrollViewportTopInRoot by remember { mutableFloatStateOf(0f) }
+    var scrollViewportHeightPx by remember { mutableFloatStateOf(0f) }
+    val rowTopInRootById = remember { mutableMapOf<String, Float>() }
+    val haptic = LocalHapticFeedback.current
+    val latestItems by rememberUpdatedState(editorState.items)
+
+    LaunchedEffect(editorState.items) {
+        if (pendingExpandNewRow) {
+            expandedItemId = editorState.items.lastOrNull()?.id
+            pendingExpandNewRow = false
+        } else if (expandedItemId != null && editorState.items.none { it.id == expandedItemId }) {
+            expandedItemId = editorState.items.firstOrNull()?.id
+        }
+        if (editorState.items.size <= 1) {
+            isReorderMode = false
+            draggedItemId = null
+            dragOffsetY = 0f
+        }
+    }
+
+    val reorderRowHeightPx = with(density) { 48.dp.toPx() }
+    val reorderSpacingPx = with(density) { 6.dp.toPx() }
+    val reorderStepPx = reorderRowHeightPx + reorderSpacingPx
+    val edgeThresholdPx = with(density) { 64.dp.toPx() }
+
+    LaunchedEffect(draggedItemId, isReorderMode) {
+        val activeId = draggedItemId
+        if (activeId == null || !isReorderMode) return@LaunchedEffect
+        while (isActive && draggedItemId == activeId) {
+            val rowTop = rowTopInRootById[activeId]
+            if (rowTop != null && scrollViewportHeightPx > 0f) {
+                val visualCenterInViewport = (rowTop - scrollViewportTopInRoot) + (reorderRowHeightPx * 0.5f) + dragOffsetY
+                val rawStep = when {
+                    visualCenterInViewport < edgeThresholdPx -> -12f
+                    visualCenterInViewport > (scrollViewportHeightPx - edgeThresholdPx) -> 12f
+                    else -> 0f
+                }
+                if (rawStep != 0f) {
+                    val actualScrolled = scrollState.scrollBy(rawStep)
+                    if (kotlin.math.abs(actualScrolled) > 0.1f) {
+                        dragOffsetY += actualScrolled
+                        val currentIdx = latestItems.indexOfFirst { it.id == activeId }
+                        if (currentIdx != -1) {
+                            if (dragOffsetY > reorderStepPx * 0.5f && currentIdx < latestItems.lastIndex) {
+                                onMoveItemRow(currentIdx, currentIdx + 1)
+                                dragOffsetY -= reorderStepPx
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            } else if (dragOffsetY < -reorderStepPx * 0.5f && currentIdx > 0) {
+                                onMoveItemRow(currentIdx, currentIdx - 1)
+                                dragOffsetY += reorderStepPx
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        }
+                    }
+                }
+            }
+            delay(16)
+        }
+    }
 
     // UPI QR Dialog: amount defaults to remaining balance due (or paid/total for fully paid)
     if (showQrDialog) {
@@ -447,6 +527,10 @@ fun ReviewEditorScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .onGloballyPositioned { coords ->
+                    scrollViewportTopInRoot = coords.positionInRoot().y
+                    scrollViewportHeightPx = coords.size.height.toFloat()
+                }
                 .verticalScroll(scrollState)
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -720,21 +804,178 @@ fun ReviewEditorScreen(
                             text = "ITEMS / PLANTS (${editorState.items.size})",
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.ExtraBold,
-                            color = NurseryColors.Maroon
+                            color = NurseryColors.Maroon,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Text(
-                            text = IndianCurrencyFormatter.formatInr(calc.subtotal, settings.currencySymbol),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = NurseryColors.BotanicalGreen
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (editorState.items.size > 1) {
+                                Surface(
+                                    onClick = {
+                                        isReorderMode = !isReorderMode
+                                        draggedItemId = null
+                                        dragOffsetY = 0f
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (isReorderMode) NurseryColors.Maroon else NurseryColors.MaroonLight,
+                                    border = BorderStroke(1.dp, NurseryColors.Maroon.copy(alpha = 0.45f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isReorderMode) Icons.Default.Check else Icons.Default.SwapVert,
+                                            contentDescription = if (isReorderMode) "Done reordering" else "Reorder rows",
+                                            tint = if (isReorderMode) Color.White else NurseryColors.Maroon,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = if (isReorderMode) "Done" else "Reorder",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isReorderMode) Color.White else NurseryColors.Maroon,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = IndianCurrencyFormatter.formatInr(calc.subtotal, settings.currencySymbol),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = NurseryColors.BotanicalGreen,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
 
                     editorState.items.forEachIndexed { index, item ->
-                        val isExpanded = (expandedRowIndex == index)
+                        key(item.id) {
+                        val isExpanded = (expandedItemId == item.id)
 
-                        if (!isExpanded) {
+                        if (isReorderMode) {
+                            val isDragging = draggedItemId == item.id
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onGloballyPositioned { coords ->
+                                        rowTopInRootById[item.id] = coords.positionInRoot().y
+                                    }
+                                    .zIndex(if (isDragging) 10f else 0f)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isDragging) NurseryColors.PaperSurface else NurseryColors.CreamBackground,
+                                    border = BorderStroke(
+                                        width = if (isDragging) 1.5.dp else 1.dp,
+                                        color = if (isDragging) NurseryColors.Maroon else NurseryColors.OutlineSoft
+                                    ),
+                                    shadowElevation = if (isDragging) 6.dp else 0.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .graphicsLayer {
+                                            if (isDragging) {
+                                                translationY = dragOffsetY
+                                                scaleX = 1.02f
+                                                scaleY = 1.02f
+                                            }
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(end = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .pointerInput(item.id, isReorderMode) {
+                                                    detectVerticalDragGestures(
+                                                        onDragStart = {
+                                                            draggedItemId = item.id
+                                                            dragOffsetY = 0f
+                                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        },
+                                                        onVerticalDrag = { change, dragAmount ->
+                                                            change.consume()
+                                                            dragOffsetY += dragAmount
+                                                            val currentIdx = latestItems.indexOfFirst { it.id == item.id }
+                                                            if (currentIdx != -1) {
+                                                                if (dragOffsetY > reorderStepPx * 0.5f && currentIdx < latestItems.lastIndex) {
+                                                                    onMoveItemRow(currentIdx, currentIdx + 1)
+                                                                    dragOffsetY -= reorderStepPx
+                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                } else if (dragOffsetY < -reorderStepPx * 0.5f && currentIdx > 0) {
+                                                                    onMoveItemRow(currentIdx, currentIdx - 1)
+                                                                    dragOffsetY += reorderStepPx
+                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                }
+                                                            }
+                                                        },
+                                                        onDragEnd = {
+                                                            draggedItemId = null
+                                                            dragOffsetY = 0f
+                                                        },
+                                                        onDragCancel = {
+                                                            draggedItemId = null
+                                                            dragOffsetY = 0f
+                                                        }
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Default.DragHandle,
+                                                contentDescription = "Drag to reorder",
+                                                tint = if (isDragging) NurseryColors.Maroon else NurseryColors.MutedInk,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = NurseryColors.MaroonLight
+                                        ) {
+                                            Text(
+                                                text = "#${index + 1}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = NurseryColors.Maroon,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Text(
+                                            text = item.description.ifBlank { "Untitled Item" },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            text = IndianCurrencyFormatter.formatInr(item.amount, settings.currencySymbol, false),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = NurseryColors.InkDark,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (!isExpanded) {
                             // Inactive row collapsed to single compact line
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
@@ -742,7 +983,7 @@ fun ReviewEditorScreen(
                                 border = BorderStroke(1.dp, NurseryColors.OutlineSoft),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { expandedRowIndex = index }
+                                    .clickable { expandedItemId = item.id }
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -789,7 +1030,16 @@ fun ReviewEditorScreen(
                                         )
                                     }
                                     IconButton(
-                                        onClick = { onRemoveItemRow(index) },
+                                        onClick = {
+                                            if (expandedItemId == item.id) {
+                                                expandedItemId = editorState.items.getOrNull(index + 1)?.id
+                                                    ?: editorState.items.getOrNull(index - 1)?.id
+                                            }
+                                            if (editorState.items.size <= 1) {
+                                                pendingExpandNewRow = true
+                                            }
+                                            onRemoveItemRow(index)
+                                        },
                                         modifier = Modifier.size(40.dp)
                                     ) {
                                         Icon(
@@ -896,7 +1146,16 @@ fun ReviewEditorScreen(
                                                 )
                                             }
                                             IconButton(
-                                                onClick = { onRemoveItemRow(index) },
+                                                onClick = {
+                                                    if (expandedItemId == item.id) {
+                                                        expandedItemId = editorState.items.getOrNull(index + 1)?.id
+                                                            ?: editorState.items.getOrNull(index - 1)?.id
+                                                    }
+                                                    if (editorState.items.size <= 1) {
+                                                        pendingExpandNewRow = true
+                                                    }
+                                                    onRemoveItemRow(index)
+                                                },
                                                 modifier = Modifier.size(40.dp)
                                             ) {
                                                 Icon(
@@ -1108,10 +1367,10 @@ fun ReviewEditorScreen(
                                             keyboardActions = KeyboardActions(
                                                 onNext = {
                                                     if (index < editorState.items.size - 1) {
-                                                        expandedRowIndex = index + 1
+                                                        expandedItemId = editorState.items[index + 1].id
                                                     } else {
+                                                        pendingExpandNewRow = true
                                                         onAddItemRow()
-                                                        expandedRowIndex = index + 1
                                                     }
                                                 }
                                             ),
@@ -1165,14 +1424,15 @@ fun ReviewEditorScreen(
                                 }
                             }
                         }
+                        }
                     }
 
                     // Add row button: expands new row
                     OutlinedButton(
                         onClick = {
-                            val newIdx = editorState.items.size
+                            isReorderMode = false
+                            pendingExpandNewRow = true
                             onAddItemRow()
-                            expandedRowIndex = newIdx
                         },
                         border = BorderStroke(1.dp, NurseryColors.Maroon.copy(alpha = 0.5f)),
                         contentPadding = PaddingValues(vertical = 10.dp),

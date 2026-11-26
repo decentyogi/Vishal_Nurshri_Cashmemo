@@ -781,6 +781,19 @@ class CashmemoViewModel(
         }
     }
 
+    fun moveItemRow(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        updateEditor { state ->
+            if (fromIndex !in state.items.indices || toIndex !in state.items.indices) {
+                return@updateEditor state
+            }
+            val mutable = state.items.toMutableList()
+            val moved = mutable.removeAt(fromIndex)
+            mutable.add(toIndex, moved)
+            state.copy(items = mutable.mapIndexed { idx, item -> item.copy(serialNo = idx + 1) })
+        }
+    }
+
     fun updateItemDescription(index: Int, desc: String) {
         updateEditor { state ->
             val item = state.items.getOrNull(index) ?: return@updateEditor state

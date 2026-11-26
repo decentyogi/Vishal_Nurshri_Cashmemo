@@ -295,6 +295,7 @@ fun CashmemoAppRoot(viewModel: CashmemoViewModel) {
                     onAddItemRow = viewModel::addItemRow,
                     onCloneItemRow = viewModel::cloneItemRow,
                     onRemoveItemRow = viewModel::removeItemRow,
+                    onMoveItemRow = viewModel::moveItemRow,
                     onUpdateItemDescription = viewModel::updateItemDescription,
                     onUpdateItemQuantity = viewModel::updateItemQuantity,
                     onUpdateItemRate = viewModel::updateItemRate,
